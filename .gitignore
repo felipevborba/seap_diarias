@@ -1,0 +1,10 @@
+bin/
+obj/
+node_modules/
+dist/
+# Build da SPA gerado pelo publish/dev (fonte fica em ClientApp)
+src/DiariasSeres.Api/wwwroot/
+.DS_Store
+*.user
+.vs/
+.idea/

@@ -1,0 +1,18 @@
+# Banco local de desenvolvimento: reproduz o PostgreSQL compartilhado ("carteira") com as
+# tabelas do CarteiraPenal (database/dev/00_*) e dados fictícios (01_*). Os schemas
+# "comum" e "diarias" são criados pela própria aplicação ao subir (VersionadorSchema).
+services:
+  postgres:
+    image: postgres:16
+    container_name: diarias-postgres
+    environment:
+      POSTGRES_DB: carteira
+      POSTGRES_USER: carteira_usr
+      POSTGRES_PASSWORD: dev_local_123
+    ports:
+      - "55432:5432"
+    volumes:
+      - ./database/dev:/docker-entrypoint-initdb.d:ro
+      - diarias-pg:/var/lib/postgresql/data
+volumes:
+  diarias-pg:

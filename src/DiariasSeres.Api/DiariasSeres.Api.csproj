@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <SpaRoot>ClientApp\</SpaRoot>
+    <DefaultItemExcludes>$(DefaultItemExcludes);$(SpaRoot)node_modules\**;$(SpaRoot)dist\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Seap.Compartilhado\Seap.Compartilhado.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.105.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Scripts de schema aplicados no start pelo VersionadorSchema (Seap.Compartilhado). -->
+    <EmbeddedResource Include="Sql\*.sql" />
+    <!-- Fontes da SPA não vão para o publish; só o build (dist -> wwwroot). -->
+    <Content Remove="$(SpaRoot)**" />
+    <None Remove="$(SpaRoot)**" />
+  </ItemGroup>
+
+  <!-- Build da SPA no publish (mesma ideia do CarteiraPenal). -p:BuildSpa=false pula o npm. -->
+  <Target Name="PublicarSpa" AfterTargets="ComputeFilesToPublish">
+    <Exec Condition=" '$(BuildSpa)' != 'false' " WorkingDirectory="$(SpaRoot)" Command="npm ci" />
+    <Exec Condition=" '$(BuildSpa)' != 'false' " WorkingDirectory="$(SpaRoot)" Command="npm run build" />
+    <ItemGroup>
+      <DistFiles Include="$(SpaRoot)dist\**" />
+      <ResolvedFileToPublish Include="@(DistFiles->'%(FullPath)')" Exclude="@(ResolvedFileToPublish)">
+        <RelativePath>wwwroot\%(RecursiveDir)%(FileName)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      </ResolvedFileToPublish>
+    </ItemGroup>
+  </Target>
+
+</Project>

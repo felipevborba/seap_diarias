@@ -1,0 +1,23 @@
+# /etc/systemd/system/diarias.service
+# Diárias SERES - mesmo servidor do CarteiraPenal (carteira.service, porta 4443).
+# Kestrel direto na 4444 (o gateway publica diarias.seap.pe.gov.br -> servidor:4444).
+# Segredos (connection string, JWT) ficam em /etc/diarias/diarias.env (chmod 600, dono root),
+# fora do diretório publicado e fora do git.
+[Unit]
+Description=Diarias SERES (ASP.NET Core) - porta 4444
+After=network.target
+
+[Service]
+WorkingDirectory=/var/www/diarias
+ExecStart=/var/www/diarias/DiariasSeres.Api
+Restart=always
+RestartSec=10
+KillSignal=SIGINT
+SyslogIdentifier=diarias
+User=www-data
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_PRINT_TELEMETRY_MESSAGE=false
+EnvironmentFile=/etc/diarias/diarias.env
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mesma base visual do CarteiraPenal (ClientApp/src/index.css). */
+@layer base {
+  body {
+    font-family: 'Inter', sans-serif;
+    @apply bg-background text-on-surface;
+  }
+}
+
+@layer components {
+  .campo {
+    @apply w-full px-3 py-2.5 bg-white border border-outline-variant rounded-lg font-body-md text-body-md
+      focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all
+      disabled:bg-surface-container-low disabled:text-on-surface-variant;
+  }
+  .rotulo {
+    @apply font-label-md text-label-md text-on-surface-variant uppercase tracking-wider px-1;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-body-md text-body-md font-semibold
+      transition-all active:scale-[0.98] disabled:opacity-60 disabled:pointer-events-none;
+  }
+  .btn-primario { @apply btn bg-primary text-on-primary hover:brightness-125 shadow-sm; }
+  .btn-secundario { @apply btn border border-outline-variant bg-white text-primary hover:bg-surface-container-low; }
+  .btn-perigo { @apply btn bg-error text-on-error hover:brightness-110; }
+  .btn-icone { @apply p-2 rounded-full text-on-surface-variant hover:bg-surface-container-high hover:text-primary transition-colors; }
+  .cartao { @apply bg-surface-card rounded-xl border border-outline-variant shadow-sm; }
+  .tabela { @apply w-full text-left font-body-md text-body-md; }
+  .tabela thead th { @apply px-4 py-3 font-label-md text-label-md uppercase tracking-wider text-on-surface-variant bg-surface-container-low border-b border-outline-variant whitespace-nowrap; }
+  .tabela tbody td { @apply px-4 py-3 border-b border-outline-variant/50 align-top; }
+  .tabela tbody tr:hover { @apply bg-surface-container-low/60; }
+}
+
+@layer utilities {
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    vertical-align: middle;
+  }
+  .bg-institutional-pattern {
+    background-color: #faf9fe;
+    background-image: radial-gradient(#001736 0.5px, transparent 0.5px), radial-gradient(#001736 0.5px, #faf9fe 0.5px);
+    background-size: 20px 20px;
+    background-position: 0 0, 10px 10px;
+    opacity: 0.03;
+  }
+  .tabular { font-variant-numeric: tabular-nums; }
+}
