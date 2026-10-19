@@ -1,0 +1,4 @@
+# Copiar para legado.properties (chmod 600) FORA do repositório. Requer VPN.
+url=jdbc:mysql://200.238.107.104:3306/diarias_seres?useSSL=false&useUnicode=true&characterEncoding=UTF-8&zeroDateTimeBehavior=convertToNull&connectTimeout=60000&socketTimeout=600000&tinyInt1isBit=false&yearIsDateType=false
+user=TROCAR
+password=TROCAR

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instala/atualiza o Diárias SERES no servidor do CarteiraPenal. Roda como o usuário de deploy
+# Instala/atualiza o Diárias SEAP no servidor do CarteiraPenal. Roda como o usuário de deploy
 # (interagi), chamado pelo enviar.sh:  bash ~/diarias-deploy/instalar-servidor.sh
 #
 # O sudo desse servidor só libera comandos específicos (mkdir, rsync, chown, chmod, cp, systemctl,
@@ -11,13 +11,13 @@
 #   Os segredos nunca saem do servidor.
 set -euo pipefail
 
-STAGING="$HOME/diarias-deploy"
+STAGING="${STAGING:-/var/diarias-deploy}"
 DESTINO=/var/www/diarias
 ENV_FILE=/etc/diarias/diarias.env
 CARTEIRA_CFG=/var/www/carteira/appsettings.Production.json
 PORTA=4444
 
-[ -x "$STAGING/pacote/DiariasSeres.Api" ] || { echo "Pacote não encontrado em $STAGING/pacote"; exit 1; }
+[ -x "$STAGING/pacote/DiariasSeap.Api" ] || { echo "Pacote não encontrado em $STAGING/pacote"; exit 1; }
 
 echo "== 1/5 Configuração ($ENV_FILE)  — pode pedir a senha do sudo"
 sudo mkdir -p /etc/diarias "$DESTINO"
@@ -54,7 +54,7 @@ echo "   livre"
 echo "== 3/5 Arquivos em $DESTINO"
 sudo rsync -a --delete "$STAGING/pacote/" "$DESTINO/"
 sudo chown -R www-data:www-data "$DESTINO"
-sudo chmod +x "$DESTINO/DiariasSeres.Api"
+sudo chmod +x "$DESTINO/DiariasSeap.Api"
 echo "   ok"
 
 echo "== 4/5 Serviço systemd"

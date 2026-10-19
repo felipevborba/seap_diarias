@@ -3,8 +3,10 @@ obj/
 node_modules/
 dist/
 # Build da SPA gerado pelo publish/dev (fonte fica em ClientApp)
-src/DiariasSeres.Api/wwwroot/
+src/DiariasSeap.Api/wwwroot/
 .DS_Store
 *.user
 .vs/
 .idea/
+relatorio_migracao_*/
+legado.properties

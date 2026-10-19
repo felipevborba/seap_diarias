@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Núcleo compartilhado entre os sistemas da SEAP/SERES que usam o mesmo PostgreSQL
+    Núcleo compartilhado entre os sistemas da SEAP que usam o mesmo PostgreSQL
     (CarteiraPenal, Diárias, futuramente PJES): mapeamento das tabelas comuns,
     autenticação (cifra Delphi + JWT), auditoria transversal e envelopes de resposta.
   -->

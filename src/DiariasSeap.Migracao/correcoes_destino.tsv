@@ -1,0 +1,59 @@
+# Correções de destino do legado: TEXTO NORMALIZADO (maiúsculas, sem acento, sem "/UF")  ->  MUNICÍPIO/UF
+# Linhas com destino vazio ("-") marcam textos que não são município: ficam só com o texto original.
+# Siglas de unidade só foram mapeadas quando a cidade está no próprio nome da unidade; as demais
+# (PJPS, PDEG, PAISJ, CRA, PABA, PDAD...) aparecem em relatorio/destinos_sem_municipio.tsv para a área definir.
+# Edite e reexecute a migração (ela é idempotente).
+texto	municipio
+# --- abreviações e grafias ---
+VITORIA DE STO ANTAO	Vitória de Santo Antão/PE
+VITORIA	Vitória de Santo Antão/PE
+STA CRUZ DO CAPIBARIBE	Santa Cruz do Capibaribe/PE
+SANTA CRUZ DO CAP	Santa Cruz do Capibaribe/PE
+SANTA CRUZ	Santa Cruz do Capibaribe/PE
+ILHA DE ITAMARACA	Itamaracá/PE
+SAO CAETANO	São Caitano/PE
+LAGOA DO ITAENGA	Lagoa de Itaenga/PE
+BELEM DO SAO FRANCISCO	Belém de São Francisco/PE
+SALQUEIRO	Salgueiro/PE
+PESQUIRA	Pesqueira/PE
+TAQUARITINGA	Taquaritinga do Norte/PE
+GARANHUS	Garanhuns/PE
+JABOATAO	Jaboatão dos Guararapes/PE
+JABOATAO DOS GUARARAPES	Jaboatão dos Guararapes/PE
+CABO	Cabo de Santo Agostinho/PE
+CABO DE STO AGOSTINHO	Cabo de Santo Agostinho/PE
+SAO LOURENCO	São Lourenço da Mata/PE
+SAO LOURENCO DA MATA	São Lourenço da Mata/PE
+SANTA MARIA DA BOA VISTA	Santa Maria da Boa Vista/PE
+# --- unidades cuja cidade está no próprio nome ---
+PSCC	Santa Cruz do Capibaribe/PE
+PVSA	Vitória de Santo Antão/PE
+PI	Igarassu/PE
+PIT	Itaquitinga/PE
+PIT 2	Itaquitinga/PE
+PIT II	Itaquitinga/PE
+PSAL	Salgueiro/PE
+PTAC	Tacaimbó/PE
+CPFAL	Abreu e Lima/PE
+CPFB	Buíque/PE
+CPFR	Recife/PE
+NP ARCOVERDE	Arcoverde/PE
+NP CARUARU	Caruaru/PE
+NP GARANHUNS	Garanhuns/PE
+NP PETROLINA	Petrolina/PE
+NP SALGUEIRO	Salgueiro/PE
+# --- não são município ---
+SERES	-
+SEAP	-
+PE	-
+INTERIOR DO ESTADO	-
+CADEIAS PUBLICAS	-
+CADEIAS PUBLICAS PERTENCENTES A GP	-
+VAZIO	-
+NAO INFORMADO	-
+GP	-
+GABINETE	-
+GISO	-
+TODAS GRP I	-
+PERTENCENTES	-
+UNIDADES PRISIONAIS DA RMR	-

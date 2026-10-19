@@ -5,7 +5,7 @@ set -euo pipefail
 RAIZ="$(cd "$(dirname "$0")/../.." && pwd)"
 SAIDA="${SAIDA:-$RAIZ/../publish/diarias-linux}"
 rm -rf "$SAIDA"
-dotnet publish "$RAIZ/src/DiariasSeres.Api/DiariasSeres.Api.csproj" \
+dotnet publish "$RAIZ/src/DiariasSeap.Api/DiariasSeap.Api.csproj" \
   -c Release -r linux-x64 --self-contained true -p:BuildSpa=true -o "$SAIDA"
 # Configuração local de desenvolvimento não vai para o servidor.
 rm -f "$SAIDA/appsettings.Development.json"

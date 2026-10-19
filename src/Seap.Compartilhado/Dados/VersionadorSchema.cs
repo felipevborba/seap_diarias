@@ -37,7 +37,7 @@ public class VersionadorSchema
         await using var conn = new NpgsqlConnection(_connectionString);
         await conn.OpenAsync(ct);
 
-        await Executar(conn, null, $"SELECT pg_advisory_lock({ChaveLock})", ct);
+        await Executar(conn, null, $"SELECT pg_advisory_lock({ChaveLock})", ct, 0);
         try
         {
             await Executar(conn, null, """
@@ -65,8 +65,12 @@ public class VersionadorSchema
                 using (var reader = new StreamReader(stream))
                     sql = await reader.ReadToEndAsync(ct);
 
+                // DDL espera bloqueios de outras sessões (ex.: backup noturno com pg_dump segura todas as tabelas).
+                // Espera até 30 min com aviso no log, em vez de estourar o timeout padrão e reiniciar em loop.
+                _logger.LogInformation("Schema {Modulo}: aplicando {Script} (aguarda bloqueios de outras sessões, ex.: backup).", modulo, nome);
                 await using var tx = await conn.BeginTransactionAsync(ct);
-                await Executar(conn, tx, sql, ct);
+                await Executar(conn, tx, "SET LOCAL lock_timeout = '30min'", ct, 0);
+                await Executar(conn, tx, sql, ct, 0);
                 await using (var reg = new NpgsqlCommand(
                     "INSERT INTO comum.schema_versao (modulo, script) VALUES (@m, @s)", conn, tx))
                 {
@@ -84,9 +88,10 @@ public class VersionadorSchema
         }
     }
 
-    private static async Task Executar(NpgsqlConnection conn, NpgsqlTransaction? tx, string sql, CancellationToken ct)
+    private static async Task Executar(NpgsqlConnection conn, NpgsqlTransaction? tx, string sql, CancellationToken ct, int? timeoutSegundos = null)
     {
         await using var cmd = new NpgsqlCommand(sql, conn, tx);
+        if (timeoutSegundos.HasValue) cmd.CommandTimeout = timeoutSegundos.Value;
         await cmd.ExecuteNonQueryAsync(ct);
     }
 }

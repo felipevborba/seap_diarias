@@ -1,6 +1,7 @@
 # Banco local de desenvolvimento: reproduz o PostgreSQL compartilhado ("carteira") com as
 # tabelas do CarteiraPenal (database/dev/00_*) e dados fictícios (01_*). Os schemas
 # "comum" e "diarias" são criados pela própria aplicação ao subir (VersionadorSchema).
+name: diariasseres  # mantém o volume do banco local criado antes da troca de nome do projeto
 services:
   postgres:
     image: postgres:16
