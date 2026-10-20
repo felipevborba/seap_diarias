@@ -11,23 +11,26 @@ namespace DiariasSeap.Api.Servicos;
 
 public record RelatorioFiltro(DateOnly? DataInicio, DateOnly? DataFim, string? Servidor, int? UnidadeId, int? DestinoMunicipioId,
     int? RegiaoId, int? TipoDiariaId, Vinculo? Vinculo, string? Situacao = null, string? Origem = null, int Page = 1, int PageSize = 50,
-    int? ServidorId = null, int? CargoId = null)
+    int? ServidorId = null, int? CargoId = null, DateOnly? CadastroInicio = null, DateOnly? CadastroFim = null, int? CidadeOrigemId = null)
 {
-    /// <summary>Nos filtros de lotação, destino, região e cargo, o valor 0 significa "não informado" (permite drill no grupo vazio).</summary>
+    /// <summary>Nos filtros de lotação, destino, região, cargo e cidade de origem, 0 significa "não informado" (drill no grupo vazio).</summary>
     public const int NaoInformado = 0;
+
+    /// <summary>Datas de cadastro são gravadas em UTC; o filtro considera o dia no horário de Pernambuco (UTC-3, sem horário de verão).</summary>
+    public static DateTime InicioDoDiaUtc(DateOnly dia) => DateTime.SpecifyKind(dia.ToDateTime(TimeOnly.MinValue).AddHours(3), DateTimeKind.Utc);
 }
 
 public record RelatorioLinhaDto(int DiariaId, int? LegadoCodigo, string Origem, string Servidor, string? Cpf, string? Matricula,
     Vinculo Vinculo, string? Cargo, string? Unidade, string Destino, string? Regiao, string TipoDiaria, DateOnly DataInicio,
     DateOnly DataFim, decimal Quantidade, decimal ValorUnitario, decimal ValorTotal, string? ProcessoSei, string Objetivo,
-    string Situacao, string? Banco, string? Agencia, string? Conta);
+    string Situacao, string? Banco, string? Agencia, string? Conta, string? CidadeOrigem, DateTime CriadoEm);
 
 public record RelatorioTotaisDto(int Diarias, int Servidores, decimal Quantidade, decimal ValorTotal);
 public record RelatorioDto(PagedResult<RelatorioLinhaDto> Linhas, RelatorioTotaisDto Totais);
 
 public record SerieDto(string Rotulo, decimal Valor, int Quantidade);
-public record DashboardDto(int Ano, RelatorioTotaisDto Totais, List<SerieDto> PorMes, List<SerieDto> PorRegiao,
-    List<SerieDto> PorTipo, List<SerieDto> PorDestino, List<SerieDto> PorUnidade);
+public record DashboardDto(RelatorioTotaisDto Totais, List<SerieDto> PorRegiao, List<SerieDto> PorTipo, List<SerieDto> PorDestino,
+    List<SerieDto> PorUnidade, List<SerieDto> PorOrigem);
 
 public record AuditoriaFiltro(string? Entidade, string? Usuario, DateOnly? DataInicio, DateOnly? DataFim, int Page = 1, int PageSize = 50);
 public record AuditoriaDto(long Id, string Entidade, string EntidadeId, string RaizEntidade, string RaizId, string Acao,
@@ -55,8 +58,22 @@ public class RelatoriosService
             _ => q.Where(i => i.Periodo.Diaria.Situacao == f.Situacao)
         };
         if (!string.IsNullOrWhiteSpace(f.Origem)) q = q.Where(i => i.Periodo.Diaria.Origem == f.Origem);
+        // Data da diária: o período entra quando se sobrepõe ao intervalo.
         if (f.DataInicio.HasValue) q = q.Where(i => i.Periodo.DataFim >= f.DataInicio);
         if (f.DataFim.HasValue) q = q.Where(i => i.Periodo.DataInicio <= f.DataFim);
+        // Data do cadastro: dia do lançamento no sistema (no legado, a data de digitação).
+        if (f.CadastroInicio.HasValue)
+        {
+            var ini = RelatorioFiltro.InicioDoDiaUtc(f.CadastroInicio.Value);
+            q = q.Where(i => i.Periodo.Diaria.CriadoEm >= ini);
+        }
+        if (f.CadastroFim.HasValue)
+        {
+            var fim = RelatorioFiltro.InicioDoDiaUtc(f.CadastroFim.Value.AddDays(1));
+            q = q.Where(i => i.Periodo.Diaria.CriadoEm < fim);
+        }
+        if (f.CidadeOrigemId == RelatorioFiltro.NaoInformado) q = q.Where(i => i.Periodo.Diaria.OrigemMunicipioId == null);
+        else if (f.CidadeOrigemId.HasValue) q = q.Where(i => i.Periodo.Diaria.OrigemMunicipioId == f.CidadeOrigemId);
         if (f.UnidadeId == RelatorioFiltro.NaoInformado) q = q.Where(i => i.Periodo.Diaria.UnidadeId == null);
         else if (f.UnidadeId.HasValue) q = q.Where(i => i.Periodo.Diaria.UnidadeId == f.UnidadeId);
         if (f.DestinoMunicipioId == RelatorioFiltro.NaoInformado) q = q.Where(i => i.Periodo.DestinoMunicipioId == null);
@@ -94,7 +111,10 @@ public class RelatoriosService
                 _db.RegioesMunicipios.Where(rm => rm.MunicipioId == i.Periodo.DestinoMunicipioId).Select(rm => rm.Regiao.Nome).FirstOrDefault(),
                 i.TipoDiaria.Nome, i.Periodo.DataInicio, i.Periodo.DataFim, i.Quantidade, i.ValorUnitario, i.ValorTotal,
                 i.Periodo.Diaria.ProcessoSei, i.Periodo.Diaria.Objetivo, i.Periodo.Diaria.Situacao,
-                i.Periodo.Diaria.Servidor.Banco, i.Periodo.Diaria.Servidor.Agencia, i.Periodo.Diaria.Servidor.Conta));
+                i.Periodo.Diaria.Servidor.Banco, i.Periodo.Diaria.Servidor.Agencia, i.Periodo.Diaria.Servidor.Conta,
+                i.Periodo.Diaria.OrigemMunicipio != null ? i.Periodo.Diaria.OrigemMunicipio.Nome + "/" + i.Periodo.Diaria.OrigemMunicipio.Uf.Sigla
+                    : i.Periodo.Diaria.OrigemTexto,
+                i.Periodo.Diaria.CriadoEm));
 
     public static async Task<RelatorioTotaisDto> Totais(IQueryable<DiariaItem> q)
     {
@@ -141,7 +161,14 @@ public class RelatoriosService
         };
         ws.Cell(1, 1).Value = "SEAP - Relatório de Diárias";
         ws.Cell(1, 1).Style.Font.SetBold().Font.SetFontSize(14);
-        ws.Cell(2, 1).Value = $"Período: {periodo} · Gerado em {DateTime.Now:dd/MM/yyyy HH:mm}";
+        var cadastro = (f.CadastroInicio, f.CadastroFim) switch
+        {
+            ({ } ini, { } fim) => $" · Cadastro: {ini:dd/MM/yyyy} a {fim:dd/MM/yyyy}",
+            ({ } ini, null) => $" · Cadastro: a partir de {ini:dd/MM/yyyy}",
+            (null, { } fim) => $" · Cadastro: até {fim:dd/MM/yyyy}",
+            _ => ""
+        };
+        ws.Cell(2, 1).Value = $"Data da diária: {periodo}{cadastro} · Gerado em {DateTime.Now:dd/MM/yyyy HH:mm}";
 
         const int cab = 4;
         for (var c = 0; c < colunas.Length; c++)
@@ -197,6 +224,7 @@ public class RelatoriosService
         new("Vínculo", l => l.Vinculo.ToString()),
         new("Cargo", l => l.Cargo ?? ""),
         new("Lotação", l => l.Unidade ?? ""),
+        new("Cidade de origem", l => l.CidadeOrigem ?? ""),
         new("Destino", l => l.Destino),
         new("Região", l => l.Regiao ?? ""),
         new("Tipo", l => l.TipoDiaria),
@@ -210,6 +238,7 @@ public class RelatoriosService
         new("Banco", l => l.Banco ?? ""),
         new("Agência", l => l.Agencia ?? ""),
         new("Conta", l => l.Conta ?? ""),
+        new("Data do cadastro", l => l.CriadoEm.AddHours(-3).Date, FormatoData),
         new("Situação", l => l.Situacao),
         new("Origem", l => l.Origem),
     };
@@ -219,21 +248,12 @@ public class RelatoriosService
 
     // ------------------------------------------------------------------ dashboard
 
-    public async Task<DashboardDto> DashboardAsync(int ano)
+    /// <summary>Painel: totais e agrupamentos para qualquer filtro (data da diária e/ou data do cadastro). A evolução
+    /// no tempo vem de AnalisesService.SerieAsync, que também escolhe a data de referência.</summary>
+    public async Task<DashboardDto> DashboardAsync(RelatorioFiltro f)
     {
-        var f = new RelatorioFiltro(new DateOnly(ano, 1, 1), new DateOnly(ano, 12, 31), null, null, null, null, null, null);
-        // Para séries por mês, o período conta no mês em que começa.
-        var q = Base(f).Where(i => i.Periodo.DataInicio.Year == ano);
+        var q = Base(f);
         var totais = await Totais(q);
-
-        var meses = await q.GroupBy(i => i.Periodo.DataInicio.Month)
-            .Select(g => new { Mes = g.Key, Valor = g.Sum(i => i.ValorTotal), Qtd = g.Count() }).ToListAsync();
-        var nomesMes = new[] { "Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez" };
-        var porMes = Enumerable.Range(1, 12).Select(m =>
-        {
-            var x = meses.FirstOrDefault(v => v.Mes == m);
-            return new SerieDto(nomesMes[m - 1], x?.Valor ?? 0, x?.Qtd ?? 0);
-        }).ToList();
 
         var porRegiao = await (
                 from i in q
@@ -254,9 +274,13 @@ public class RelatoriosService
             .Select(g => new SerieDto(g.Key, g.Sum(i => i.ValorTotal), g.Count()))
             .ToListAsync();
 
+        var porOrigem = await q.GroupBy(i => i.Periodo.Diaria.OrigemMunicipio != null ? i.Periodo.Diaria.OrigemMunicipio.Nome : "Sem cidade de origem")
+            .Select(g => new SerieDto(g.Key, g.Sum(i => i.ValorTotal), g.Count()))
+            .ToListAsync();
+
         // Agregação no banco; ordenação/corte em memória (poucos grupos).
         static List<SerieDto> Top(List<SerieDto> l, int n = int.MaxValue) => l.OrderByDescending(s => s.Valor).Take(n).ToList();
-        return new DashboardDto(ano, totais, porMes, Top(porRegiao), Top(porTipo), Top(porDestino, 10), Top(porUnidade, 10));
+        return new DashboardDto(totais, Top(porRegiao), Top(porTipo), Top(porDestino, 10), Top(porUnidade, 10), Top(porOrigem, 10));
     }
 
     // ------------------------------------------------------------------ auditoria geral

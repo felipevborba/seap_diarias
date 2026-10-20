@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import CampoData from '../components/ui/CampoData';
 import api from '../api';
 import { usePerfil } from '../components/layout/Layout';
 import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, Modal, Selo, Vazio, useAviso } from '../components/ui';
@@ -34,6 +35,13 @@ export default function TabelaValores() {
     const r = await api.del(`/api/cadastros/valores/${v.id}`);
     avisar(r.message, r.success ? 'sucesso' : 'erro');
     if (r.success) valores.recarregar();
+  };
+
+  const excluirTipo = async (t) => {
+    if (!window.confirm(`Excluir o tipo de diária "${t.nome}"? As linhas da tabela de valores desse tipo também serão excluídas.`)) return;
+    const r = await api.del(`/api/cadastros/tipos/${t.id}`);
+    avisar(r.message, r.success ? 'sucesso' : 'erro');
+    if (r.success) { tipos.recarregar(); valores.recarregar(); }
   };
 
   const salvarTipo = async (e) => {
@@ -107,7 +115,12 @@ export default function TabelaValores() {
                   <p className="font-body-md text-body-md font-semibold">{t.nome} {!t.ativo && <Selo>Inativo</Selo>}</p>
                   {t.descricao && <p className="font-label-md text-label-md text-on-surface-variant">{t.descricao}</p>}
                 </div>
-                {admin && <button type="button" className="btn-icone" aria-label={`Editar ${t.nome}`} onClick={() => { setErroForm(''); setTipoForm({ ...t, descricao: t.descricao || '' }); }}><Icone nome="edit" /></button>}
+                {admin && (
+                  <div className="flex">
+                    <button type="button" className="btn-icone" aria-label={`Editar ${t.nome}`} onClick={() => { setErroForm(''); setTipoForm({ ...t, descricao: t.descricao || '' }); }}><Icone nome="edit" /></button>
+                    <button type="button" className="btn-icone hover:!text-error" aria-label={`Excluir ${t.nome}`} title="Excluir tipo" onClick={() => excluirTipo(t)}><Icone nome="delete" /></button>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -140,10 +153,10 @@ export default function TabelaValores() {
                 onChange={(e) => setForm({ ...form, valor: e.target.value.replace(/[^\d,.]/g, '') })} />
             </Campo>
             <Campo rotulo="Vigência início *">
-              <input type="date" className="campo" required value={form.vigenciaInicio} onChange={(e) => setForm({ ...form, vigenciaInicio: e.target.value })} />
+              <CampoData required value={form.vigenciaInicio} onChange={(e) => setForm({ ...form, vigenciaInicio: e.target.value })} />
             </Campo>
             <Campo rotulo="Vigência fim" dica="Vazio = sem prazo">
-              <input type="date" className="campo" min={form.vigenciaInicio} value={form.vigenciaFim} onChange={(e) => setForm({ ...form, vigenciaFim: e.target.value })} />
+              <CampoData min={form.vigenciaInicio} value={form.vigenciaFim} onChange={(e) => setForm({ ...form, vigenciaFim: e.target.value })} />
             </Campo>
           </form>
         )}

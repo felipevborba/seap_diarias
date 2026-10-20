@@ -1,50 +1,68 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
+import api from '../api';
 import { Permitido } from '../components/layout/Layout';
 import { Alerta, CabecalhoPagina, Carregando, Icone } from '../components/ui';
-import { BarrasHorizontais, ColunasMensais, Indicador } from '../components/ui/Graficos';
+import { BarrasHorizontais, Indicador } from '../components/ui/Graficos';
+import { ColunasSerie } from '../components/ui/GraficosAnalise';
+import { FiltroPeriodo, periodoParaFiltro } from '../components/ui/FiltroPeriodo';
 import { fmtMoeda, fmtNumero } from '../lib/formato';
-import { useDados } from '../lib/useDados';
 
 export default function Painel() {
-  const anoAtual = new Date().getFullYear();
-  const [ano, setAno] = useState(anoAtual);
-  const { dados: d, carregando, erro } = useDados('/api/relatorios/dashboard', { ano });
+  const [periodo, setPeriodo] = useState({ preset: 'ano', base: 'diaria', de: '', ate: '' });
+  const filtro = useMemo(() => periodoParaFiltro(periodo), [periodo]);
+  const chave = JSON.stringify(filtro);
+  const [d, setD] = useState(null);
+  const [serie, setSerie] = useState(null);
+  const [erro, setErro] = useState('');
+
+  useEffect(() => {
+    let vivo = true;
+    setD(null); setSerie(null); setErro('');
+    const f = JSON.parse(chave);
+    api.get('/api/relatorios/dashboard', f).then((r) => vivo && (r.success ? setD(r.data) : setErro(r.message)));
+    api.get('/api/analises/serie', { ...f, baseData: periodo.base }).then((r) => vivo && r.success && setSerie(r.data));
+    return () => { vivo = false; };
+  }, [chave, periodo.base]);
+
+  const rotuloBase = periodo.base === 'cadastro' ? 'data do cadastro' : 'data da diária';
 
   return (
     <>
       <CabecalhoPagina
         titulo="Painel de diárias"
-        subtitulo="Custos e volume por mês, região, tipo, destino e lotação. Diárias canceladas não entram."
+        subtitulo={`Custos e volume por mês, região, tipo, destino, origem e lotação, pela ${rotuloBase}. Diárias canceladas e rejeitadas não entram.`}
         acoes={
-          <>
-            <label className="flex items-center gap-2">
-              <span className="rotulo !normal-case !tracking-normal">Ano</span>
-              <select className="campo !w-32 font-semibold tabular" value={ano} onChange={(e) => setAno(Number(e.target.value))}>
-                {Array.from({ length: 6 }, (_, i) => anoAtual - i).map((a) => <option key={a} value={a}>{a}</option>)}
-              </select>
-            </label>
-            <Permitido perfis={['ADMIN', 'OPERADOR']}>
-              <Link to="/diarias/nova" className="btn-primario"><Icone nome="add" /> Lançar diária</Link>
-            </Permitido>
-          </>
+          <Permitido perfis={['ADMIN', 'OPERADOR']}>
+            <Link to="/diarias/nova" className="btn-primario"><Icone nome="add" /> Lançar diária</Link>
+          </Permitido>
         }
       />
+      <FiltroPeriodo valor={periodo} onChange={setPeriodo} className="mb-4" />
       <Alerta className="mb-4">{erro}</Alerta>
-      {carregando && !d ? <Carregando /> : d && (
+      {!d ? <Carregando /> : (
         <div className="flex flex-col gap-gutter-grid">
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-gutter-grid">
-            <Indicador destaque rotulo={`Gasto com diárias em ${d.ano}`} valor={fmtMoeda(d.totais.valorTotal)} />
-            <Indicador rotulo="Diárias lançadas" valor={fmtNumero(d.totais.diarias)} />
+            <Indicador destaque rotulo="Gasto com diárias no período" valor={fmtMoeda(d.totais.valorTotal)} />
+            <Indicador rotulo="Lançamentos" valor={fmtNumero(d.totais.diarias)} />
             <Indicador rotulo="Servidores atendidos" valor={fmtNumero(d.totais.servidores)} />
             <Indicador rotulo="Quantidade de diárias" valor={fmtNumero(d.totais.quantidade)}
               detalhe={d.totais.quantidade > 0 ? `Média de ${fmtMoeda(d.totais.valorTotal / d.totais.quantidade)} por diária` : undefined} />
           </div>
-          <ColunasMensais titulo="Gasto por mês" subtitulo="Pelo mês de início de cada período" dados={d.porMes} />
+          <section className="cartao p-padding-card">
+            <h3 className="font-body-lg text-body-lg font-semibold">Gasto por {serie?.granularidade === 'ano' ? 'ano' : 'mês'}</h3>
+            <p className="font-label-md text-label-md text-on-surface-variant mb-4">
+              Pela {rotuloBase}. Clique numa coluna para ver só aquele {serie?.granularidade === 'ano' ? 'ano' : 'mês'}.
+            </p>
+            {!serie ? <Carregando /> : (
+              <ColunasSerie pontos={serie.pontos} onSelecionar={(p) => setPeriodo({ ...periodo, preset: 'custom', de: p.inicio, ate: p.fim })} />
+            )}
+          </section>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-gutter-grid">
             <BarrasHorizontais titulo="Gasto por região" subtitulo="Região do município de destino" dados={d.porRegiao} />
             <BarrasHorizontais titulo="Gasto por tipo de diária" dados={d.porTipo} />
             <BarrasHorizontais titulo="10 destinos com maior gasto" dados={d.porDestino} />
+            <BarrasHorizontais titulo="10 cidades de origem com maior gasto" dados={d.porOrigem} />
             <BarrasHorizontais titulo="10 lotações com maior gasto" dados={d.porUnidade} />
           </div>
         </div>
@@ -52,3 +70,4 @@ export default function Painel() {
     </>
   );
 }
+

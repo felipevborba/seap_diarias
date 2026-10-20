@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import CampoData from '../components/ui/CampoData';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { Alerta, CabecalhoPagina, Carregando, Icone, Vazio, useAviso } from '../components/ui';
@@ -12,6 +13,7 @@ const DIMENSOES = [
   { id: 'lotacao', rotulo: 'Lotação', icone: 'domain', filtro: 'unidadeId', proxima: 'servidor' },
   { id: 'servidor', rotulo: 'Servidor', icone: 'badge', filtro: 'servidorId', proxima: null },
   { id: 'destino', rotulo: 'Destino', icone: 'location_on', filtro: 'destinoMunicipioId', proxima: 'servidor' },
+  { id: 'cidadeOrigem', rotulo: 'Cidade de origem', icone: 'trip_origin', filtro: 'cidadeOrigemId', proxima: 'destino' },
   { id: 'regiao', rotulo: 'Região', icone: 'map', filtro: 'regiaoId', proxima: 'destino' },
   { id: 'tipo', rotulo: 'Tipo de diária', icone: 'category', filtro: 'tipoDiariaId', proxima: 'servidor' },
   { id: 'cargo', rotulo: 'Cargo', icone: 'work', filtro: 'cargoId', proxima: 'servidor' },
@@ -26,6 +28,7 @@ const FILTROS_DRILL = DIMENSOES.map((d) => d.filtro).filter((f) => f !== 'situac
 const hoje = new Date();
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const PERIODOS = {
+  mes: { rotulo: 'Este mês', de: iso(new Date(hoje.getFullYear(), hoje.getMonth(), 1)), ate: iso(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0)) },
   ano: { rotulo: 'Este ano', de: `${hoje.getFullYear()}-01-01`, ate: `${hoje.getFullYear()}-12-31` },
   anoAnterior: { rotulo: 'Ano passado', de: `${hoje.getFullYear() - 1}-01-01`, ate: `${hoje.getFullYear() - 1}-12-31` },
   doze: { rotulo: 'Últimos 12 meses', de: iso(new Date(hoje.getFullYear(), hoje.getMonth() - 11, 1)), ate: iso(new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0)) },
@@ -42,7 +45,12 @@ export default function Analises() {
   const de = periodo === 'custom' ? params.get('de') || '' : PERIODOS[periodo]?.de ?? '';
   const ate = periodo === 'custom' ? params.get('ate') || '' : PERIODOS[periodo]?.ate ?? '';
   const filtros = useMemo(() => {
-    const f = { dataInicio: de, dataFim: ate, situacao: params.get('situacao') || 'VIGENTES', origem: params.get('origem') || '' };
+    // "Considerar": o intervalo vale para a data da diária (período da viagem) ou para a data do cadastro.
+    const porCadastro = params.get('base') === 'cadastro';
+    const f = {
+      ...(porCadastro ? { cadastroInicio: de, cadastroFim: ate } : { dataInicio: de, dataFim: ate }),
+      situacao: params.get('situacao') || 'VIGENTES', origem: params.get('origem') || '',
+    };
     FILTROS_DRILL.forEach((k) => { if (params.get(k) !== null) f[k] = params.get(k); });
     return f;
   }, [params, de, ate]);
@@ -91,7 +99,7 @@ export default function Analises() {
     setVisao(null); setSerie(null); setDestaques({}); setErro('');
     const f = JSON.parse(chaveFiltros);
     api.get('/api/analises/visao-geral', f).then((r) => vivo && (r.success ? setVisao(r.data) : setErro(r.message)));
-    api.get('/api/analises/serie', f).then((r) => vivo && r.success && setSerie(r.data));
+    api.get('/api/analises/serie', { ...f, baseData: f.cadastroInicio !== undefined ? 'cadastro' : 'diaria' }).then((r) => vivo && r.success && setSerie(r.data));
     DESTAQUES.forEach((dim) => api.get(`/api/analises/ranking/${dim}`, f).then((r) => vivo && r.success && setDestaques((d) => ({ ...d, [dim]: r.data }))));
     return () => { vivo = false; };
   }, [chaveFiltros]);
@@ -121,6 +129,13 @@ export default function Analises() {
       {/* Filtros globais: uma linha acima de tudo */}
       <div className="cartao p-4 mb-4 flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1.5">
+          <span className="rotulo">Considerar</span>
+          <select className="campo !w-56" value={params.get('base') || 'diaria'} onChange={(e) => atualizar({ base: e.target.value === 'diaria' ? null : e.target.value })}>
+            <option value="diaria">Data da diária (viagem)</option>
+            <option value="cadastro">Data do cadastro (lançamento)</option>
+          </select>
+        </label>
+        <label className="flex flex-col gap-1.5">
           <span className="rotulo">Período</span>
           <select className="campo !w-52" value={periodo} onChange={(e) => atualizar({ periodo: e.target.value, de: null, ate: null })}>
             {Object.entries(PERIODOS).map(([k, p]) => <option key={k} value={k}>{p.rotulo}</option>)}
@@ -130,9 +145,9 @@ export default function Analises() {
         {periodo === 'custom' && (
           <>
             <label className="flex flex-col gap-1.5"><span className="rotulo">De</span>
-              <input type="date" className="campo" value={de} onChange={(e) => atualizar({ de: e.target.value }, true)} /></label>
+              <CampoData value={de} onChange={(e) => atualizar({ de: e.target.value }, true)} /></label>
             <label className="flex flex-col gap-1.5"><span className="rotulo">Até</span>
-              <input type="date" className="campo" value={ate} onChange={(e) => atualizar({ ate: e.target.value }, true)} /></label>
+              <CampoData value={ate} onChange={(e) => atualizar({ ate: e.target.value }, true)} /></label>
           </>
         )}
         <label className="flex flex-col gap-1.5">
@@ -193,7 +208,9 @@ export default function Analises() {
         <div className="flex items-start justify-between gap-2 mb-4">
           <div>
             <h3 className="font-body-lg text-body-lg font-semibold">Evolução {serie?.granularidade === 'ano' ? 'anual' : 'mensal'}</h3>
-            <p className="font-label-md text-label-md text-on-surface-variant">Pela data de início de cada período. Clique numa coluna para analisar só aquele {serie?.granularidade === 'ano' ? 'ano' : 'mês'}.</p>
+            <p className="font-label-md text-label-md text-on-surface-variant">
+              Pela {params.get('base') === 'cadastro' ? 'data do cadastro (lançamento)' : 'data de início de cada período'}. Clique numa coluna para analisar só aquele {serie?.granularidade === 'ano' ? 'ano' : 'mês'}.
+            </p>
           </div>
         </div>
         {!serie ? <Carregando /> : <ColunasSerie pontos={serie.pontos} onSelecionar={selecionarPeriodoSerie} />}

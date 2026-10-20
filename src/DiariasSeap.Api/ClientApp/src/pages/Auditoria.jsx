@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import CampoData from '../components/ui/CampoData';
 import { Link } from 'react-router-dom';
 import { Alerta, CabecalhoPagina, Carregando, Icone, Paginacao, Selo, Vazio } from '../components/ui';
 import { fmtDataHora } from '../lib/formato';
@@ -35,9 +36,9 @@ export default function Auditoria() {
         <label className="flex flex-col gap-1.5"><span className="rotulo">Usuário</span>
           <input className="campo" value={filtro.usuario} onChange={set('usuario')} /></label>
         <label className="flex flex-col gap-1.5"><span className="rotulo">De</span>
-          <input type="date" className="campo" value={filtro.dataInicio} onChange={set('dataInicio')} /></label>
+          <CampoData value={filtro.dataInicio} onChange={set('dataInicio')} /></label>
         <label className="flex flex-col gap-1.5"><span className="rotulo">Até</span>
-          <input type="date" className="campo" value={filtro.dataFim} onChange={set('dataFim')} /></label>
+          <CampoData value={filtro.dataFim} onChange={set('dataFim')} /></label>
         <button className="btn-primario" type="submit"><Icone nome="search" /> Filtrar</button>
       </form>
 

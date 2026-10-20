@@ -33,10 +33,14 @@ call("POST","/api/cadastros/valores",{"tipoDiariaId":P,"vinculo":None,"cargoId":
 call("POST","/api/cadastros/valores",{"tipoDiariaId":I,"vinculo":"Contratado","cargoId":None,"valor":150,"vigenciaInicio":"2026-01-01","vigenciaFim":None},tok=T)
 s,m=call("GET","/api/localidades/municipios?busca=caruaru",tok=T); car=m["data"][0]["id"]
 s,m=call("GET","/api/localidades/municipios?busca=petrol",tok=T); pet=m["data"][0]["id"]
+s,m=call("GET","/api/localidades/municipios?busca=recife",tok=T); rec=m["data"][0]["id"]
 
 per=lambda ini,fim,dest,itens,id=None: {"id":id,"dataInicio":ini,"dataFim":fim,"destinoMunicipioId":dest,"itens":itens}
 it=lambda tipo,q=None,id=None: {"id":id,"tipoDiariaId":tipo,"quantidade":q}
-req={"servidorId":serv["id"],"objetivo":"Escolta","processoSei":"1/2026","observacao":None,"periodos":[
+s,r=call("POST","/api/diarias/simular",{"servidorId":serv["id"],"objetivo":"x","processoSei":None,"observacao":None,"periodos":[]},tok=T)
+s,r=call("POST","/api/diarias",{"servidorId":serv["id"],"objetivo":"Sem origem","processoSei":None,"observacao":None,"periodos":[{"id":None,"dataInicio":"2026-03-01","dataFim":"2026-03-01","destinoMunicipioId":car,"itens":[{"id":None,"tipoDiariaId":I,"quantidade":None}]}]},tok=T)
+ok("cidade de origem obrigatoria", not r["success"] and "origem" in r["message"], r["message"])
+req={"servidorId":serv["id"],"origemMunicipioId":rec,"objetivo":"Escolta","processoSei":"1/2026","observacao":None,"periodos":[
     per("2026-10-05","2026-10-07",car,[it(I,2),it(P,1)]), per("2026-10-10","2026-10-15",pet,[it(I)])]}
 s,r=call("POST","/api/diarias/simular",req,tok=T)
 ok("simulacao: 2x177 + 1x88,50 + 6x177 = 1504,50", r["data"]["valorTotal"]==1504.5, str(r["data"]["valorTotal"]))
@@ -76,4 +80,38 @@ s,x=call("GET","/api/relatorios/exportar?situacao=TODAS",tok=T,raw=True); ok("xl
 s,r=call("GET","/api/relatorios/dashboard?ano=2026",tok=T); ok("dashboard", r["success"])
 call("PUT",f"/api/usuarios/{outro['id']}/perfil",{"perfil":"CONSULTA"},tok=T)
 s,r=login(A2); s,r=call("POST",f"/api/diarias/{d1}/aprovar",tok=r["data"]["token"]); ok("consulta nao aprova (403)", s==403)
+
+# ---- feedback da apresentação ----
+s,r=call("GET",f"/api/diarias/{d1}",tok=T); ok("detalhe traz cidade de origem", r["data"]["cidadeOrigemId"]==rec and "Recife" in r["data"]["cidadeOrigem"], r["data"]["cidadeOrigem"])
+hoje=__import__("datetime").date.today().isoformat()
+s,r=call("GET",f"/api/relatorios?situacao=TODAS&cadastroInicio={hoje}&cadastroFim={hoje}",tok=T); ok("filtro data do cadastro (hoje)", r["data"]["linhas"]["totalItems"]==5, str(r["data"]["linhas"]["totalItems"]))
+s,r=call("GET","/api/relatorios?situacao=TODAS&cadastroInicio=2020-01-01&cadastroFim=2020-12-31",tok=T); ok("filtro data do cadastro (fora)", r["data"]["linhas"]["totalItems"]==0)
+s,r=call("GET",f"/api/relatorios?situacao=TODAS&cidadeOrigemId={rec}",tok=T); ok("filtro cidade de origem", r["data"]["linhas"]["totalItems"]==5 and r["data"]["linhas"]["items"][0]["cidadeOrigem"].startswith("Recife"))
+s,r=call("GET",f"/api/relatorios?situacao=TODAS&cidadeOrigemId={car}",tok=T); ok("filtro cidade de origem (outra)", r["data"]["linhas"]["totalItems"]==0)
+s,x=call("GET",f"/api/relatorios/exportar?situacao=TODAS&cadastroInicio={hoje}&cidadeOrigemId={rec}",tok=T,raw=True); ok("exportacao com filtros novos", s==200 and x[:2]==b"PK")
+s,r=call("GET",f"/api/relatorios/dashboard?situacao=VIGENTES&cadastroInicio={hoje}&cadastroFim={hoje}",tok=T); ok("dashboard por data do cadastro", r["success"] and "porOrigem" in r["data"])
+s,r=call("GET",f"/api/analises/serie?situacao=TODAS&cadastroInicio={hoje[:8]}01&cadastroFim={hoje}&baseData=cadastro",tok=T); ok("serie por data do cadastro", r["success"] and sum(p["valor"] for p in r["data"]["pontos"])>0)
+s,r=call("GET","/api/analises/ranking/cidadeOrigem?situacao=TODAS",tok=T); ok("analise por cidade de origem", r["success"] and r["data"]["itens"][0]["rotulo"].startswith("Recife"))
+# tipos
+s,r=call("POST","/api/cadastros/tipos",{"nome":"teste","descricao":"testes","ativo":True},tok=T); tteste=r["data"]
+s,r=call("DELETE",f"/api/cadastros/tipos/{tteste}",tok=T); ok("exclui tipo sem uso", r["success"], r["message"])
+s,r=call("DELETE",f"/api/cadastros/tipos/{I}",tok=T); ok("nao exclui tipo em uso", not r["success"] and "usado" in r["message"], r["message"][:70])
+# lotacoes
+s,r=call("POST","/api/cadastros/lotacoes",{"sigla":"tst","nome":"Unidade de Teste"},tok=T); lid=r["data"]; ok("cria lotacao", r["success"])
+s,r=call("PUT",f"/api/cadastros/lotacoes/{lid}",{"sigla":"TST2","nome":"Unidade de Teste 2"},tok=T); ok("edita lotacao", r["success"])
+s,r=call("GET","/api/cadastros/lotacoes",tok=T); ok("lista lotacoes com contagens", any(l["sigla"]=="TST2" and l["nome"]=="UNIDADE DE TESTE 2" for l in r["data"]))
+s,r=call("DELETE",f"/api/cadastros/lotacoes/{lid}",tok=T); ok("exclui lotacao sem uso", r["success"])
+uso=next(l for l in call("GET","/api/cadastros/lotacoes",tok=T)[1]["data"] if l["policiais"]>0)
+s,r=call("DELETE",f"/api/cadastros/lotacoes/{uso['id']}",tok=T); ok("nao exclui lotacao em uso", not r["success"] and "em uso" in r["message"], r["message"][:80])
+# usuarios
+s,r=call("POST","/api/usuarios",{"nome":"Usuario Novo","cpf":"111.444.777-35","matricula":"999","senha":"abc123","perfil":"OPERADOR"},tok=T); nid=r["data"]; ok("cria usuario", r["success"], r.get("message"))
+s,r=call("PUT",f"/api/usuarios/{nid}",{"nome":"Usuario Editado","cpf":"111.444.777-35","matricula":"998","novaSenha":"nova123","perfil":"CONSULTA"},tok=T); ok("edita usuario", r["success"], r.get("message"))
+s,r=call("POST","/api/auth/login",{"cpf":"11144477735","senha":"nova123"}); ok("login com senha redefinida e perfil novo", s==200 and r["data"]["perfil"]=="CONSULTA")
+s,u=call("GET","/api/usuarios?somenteComAcesso=false&busca=Editado",tok=T); ok("lista marca criado pelas Diarias", u["data"]["items"][0]["criadoPelasDiarias"] is True)
+s,r=call("DELETE",f"/api/usuarios/{nid}",tok=T); ok("exclui usuario criado pelas Diarias", r["success"] and r["data"]["removidoDoBanco"] is True, r.get("message"))
+s,r=call("POST","/api/auth/login",{"cpf":"11144477735","senha":"nova123"}); ok("excluido nao entra mais", s==401)
+s,r=call("DELETE",f"/api/usuarios/{outro['id']}",tok=T); ok("usuario da Carteira: so remove o acesso", r["success"] and r["data"]["removidoDoBanco"] is False, r.get("message"))
+s,u=call("GET","/api/usuarios?somenteComAcesso=false&busca=Operador",tok=T); ok("usuario da Carteira continua na base", u["data"]["totalItems"]==1 and u["data"]["items"][0]["perfil"] is None)
+s,me=call("GET","/api/auth/sessao",tok=T)
+s,r=call("DELETE",f"/api/usuarios/{me['data']['usuarioId']}",tok=T); ok("nao exclui a si mesmo", not r["success"])
 print("FALHAS:", falhas); sys.exit(1 if falhas else 0)

@@ -4,6 +4,7 @@ import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, Modal, Paginacao, Se
 import { PERFIS, fmtCpf, mascaraCpf, rotuloPerfil } from '../lib/formato';
 import { useDados } from '../lib/useDados';
 
+// Usuários são os mesmos do sistema da Carteira (public.usuario): nome, CPF, matrícula e senha valem para os dois.
 export default function Usuarios() {
   const avisar = useAviso();
   const eu = getUsuario()?.usuarioId;
@@ -12,8 +13,10 @@ export default function Usuarios() {
   const [pagina, setPagina] = useState(1);
   const { dados, carregando, erro, recarregar } = useDados('/api/usuarios', { ...aplicado, page: pagina, pageSize: 20 });
   const config = useDados('/api/usuarios/configuracao').dados;
-  const [novo, setNovo] = useState(null);
+  const [form, setForm] = useState(null); // { id?, nome, cpf, matricula, senha, perfil }
+  const [excluir, setExcluir] = useState(null);
   const [erroForm, setErroForm] = useState('');
+  const [salvando, setSalvando] = useState(false);
 
   const definirPerfil = async (u, perfil) => {
     const r = await api.put(`/api/usuarios/${u.id}/perfil`, { perfil: perfil || null });
@@ -21,24 +24,36 @@ export default function Usuarios() {
     if (r.success) recarregar();
   };
 
-  const criar = async (e) => {
+  const abrirNovo = () => { setErroForm(''); setForm({ nome: '', cpf: '', matricula: '', senha: '', perfil: 'OPERADOR' }); };
+  const abrirEdicao = (u) => { setErroForm(''); setForm({ id: u.id, nome: u.nome, cpf: fmtCpf(u.cpf || ''), matricula: u.matricula || '', senha: '', perfil: u.perfil || '', proprio: u.id === eu, administradorGeral: u.administradorGeral }); };
+
+  const salvar = async (e) => {
     e.preventDefault();
-    const r = await api.post('/api/usuarios', novo);
+    setSalvando(true);
+    const r = form.id
+      ? await api.put(`/api/usuarios/${form.id}`, { nome: form.nome, cpf: form.cpf, matricula: form.matricula, novaSenha: form.senha || null, perfil: form.proprio ? null : (form.perfil || '') })
+      : await api.post('/api/usuarios', { nome: form.nome, cpf: form.cpf, matricula: form.matricula, senha: form.senha, perfil: form.perfil });
+    setSalvando(false);
     if (!r.success) { setErroForm(r.message); return; }
     avisar(r.message);
-    setNovo(null);
+    setForm(null);
     recarregar();
+  };
+
+  const confirmarExclusao = async () => {
+    const r = await api.del(`/api/usuarios/${excluir.id}`);
+    avisar(r.message, r.success ? 'sucesso' : 'erro');
+    setExcluir(null);
+    if (r.success) recarregar();
   };
 
   return (
     <>
       <CabecalhoPagina
         titulo="Usuários e acessos"
-        subtitulo="Os usuários são os mesmos do sistema da Carteira Funcional. Aqui você concede ou revoga o acesso às Diárias."
+        subtitulo="Os usuários são os mesmos do sistema da Carteira Funcional. Aqui você cadastra, edita, concede ou remove o acesso às Diárias."
         acoes={config?.criacaoPermitida && (
-          <button type="button" className="btn-primario" onClick={() => { setErroForm(''); setNovo({ nome: '', cpf: '', matricula: '', senha: '', perfil: 'OPERADOR' }); }}>
-            <Icone nome="person_add" /> Novo usuário
-          </button>
+          <button type="button" className="btn-primario" onClick={abrirNovo}><Icone nome="person_add" /> Novo usuário</button>
         )}
       />
 
@@ -69,15 +84,18 @@ export default function Usuarios() {
           <>
             <div className="overflow-x-auto">
               <table className="tabela">
-                <thead><tr><th>Nome</th><th>CPF</th><th>Matrícula</th><th>Perfil nas Diárias</th></tr></thead>
+                <thead><tr><th>Nome</th><th>CPF</th><th>Matrícula</th><th>Perfil nas Diárias</th><th className="text-right">Ações</th></tr></thead>
                 <tbody>
                   {dados.items.map((u) => (
                     <tr key={u.id}>
                       <td>
                         <div className="font-semibold">{u.nome}</div>
-                        {u.administradorGeral && <span className="font-label-md text-label-md text-on-surface-variant">Administrador geral (Carteira)</span>}
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {u.administradorGeral && <Selo cor="azul">Administrador geral (Carteira)</Selo>}
+                          {u.criadoPelasDiarias && <Selo>Cadastrado nas Diárias</Selo>}
+                        </div>
                       </td>
-                      <td className="tabular whitespace-nowrap">{fmtCpf(u.cpf)}</td>
+                      <td className="tabular whitespace-nowrap">{u.cpf ? fmtCpf(u.cpf) : '—'}</td>
                       <td className="tabular">{u.matricula || '—'}</td>
                       <td>
                         {u.id === eu ? <Selo cor="azul">{rotuloPerfil(u.perfil)} (você)</Selo> : (
@@ -86,6 +104,15 @@ export default function Usuarios() {
                             <option value="">Sem acesso</option>
                             {PERFIS.map((p) => <option key={p.valor} value={p.valor}>{p.rotulo}</option>)}
                           </select>
+                        )}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        <button type="button" className="btn-icone" onClick={() => abrirEdicao(u)} aria-label={`Editar ${u.nome}`} title="Editar"><Icone nome="edit" /></button>
+                        {u.id !== eu && !u.administradorGeral && (
+                          <button type="button" className="btn-icone hover:!text-error" onClick={() => setExcluir(u)} aria-label={`Excluir ${u.nome}`}
+                            title={u.criadoPelasDiarias ? 'Excluir usuário' : 'Remover acesso às Diárias'}>
+                            <Icone nome={u.criadoPelasDiarias ? 'delete' : 'person_remove'} />
+                          </button>
                         )}
                       </td>
                     </tr>
@@ -98,23 +125,42 @@ export default function Usuarios() {
         )}
       </div>
 
-      <Modal aberto={!!novo} titulo="Novo usuário" onFechar={() => setNovo(null)}
-        rodape={<><button type="button" className="btn-secundario" onClick={() => setNovo(null)}>Cancelar</button>
-          <button type="submit" form="form-usuario" className="btn-primario"><Icone nome="save" /> Criar</button></>}>
-        {novo && (
-          <form id="form-usuario" onSubmit={criar} className="grid grid-cols-2 gap-form-element-gap">
+      <Modal aberto={!!form} titulo={form?.id ? 'Editar usuário' : 'Novo usuário'} onFechar={() => setForm(null)}
+        rodape={<><button type="button" className="btn-secundario" onClick={() => setForm(null)}>Cancelar</button>
+          <button type="submit" form="form-usuario" className="btn-primario" disabled={salvando}><Icone nome="save" /> {form?.id ? 'Salvar' : 'Criar'}</button></>}>
+        {form && (
+          <form id="form-usuario" onSubmit={salvar} className="grid grid-cols-2 gap-form-element-gap">
             <Alerta className="col-span-2">{erroForm}</Alerta>
-            <Alerta tipo="aviso" className="col-span-2">O usuário é criado na base compartilhada e usa o mesmo login da Carteira Funcional.</Alerta>
-            <Campo rotulo="Nome *" className="col-span-2"><input className="campo" required value={novo.nome} onChange={(e) => setNovo({ ...novo, nome: e.target.value })} /></Campo>
-            <Campo rotulo="CPF *"><input className="campo" required value={novo.cpf} onChange={(e) => setNovo({ ...novo, cpf: mascaraCpf(e.target.value) })} /></Campo>
-            <Campo rotulo="Matrícula"><input className="campo" value={novo.matricula} onChange={(e) => setNovo({ ...novo, matricula: e.target.value })} /></Campo>
-            <Campo rotulo="Senha inicial *" dica="Mínimo 6 caracteres"><input type="password" className="campo" required minLength={6} value={novo.senha} onChange={(e) => setNovo({ ...novo, senha: e.target.value })} /></Campo>
-            <Campo rotulo="Perfil *">
-              <select className="campo" value={novo.perfil} onChange={(e) => setNovo({ ...novo, perfil: e.target.value })}>
+            <Alerta tipo="aviso" className="col-span-2">
+              {form.id
+                ? 'Nome, CPF, matrícula e senha são compartilhados com o sistema da Carteira: a alteração vale para os dois.'
+                : 'O usuário é criado na base compartilhada e usa o mesmo login (CPF e senha) da Carteira Funcional.'}
+            </Alerta>
+            <Campo rotulo="Nome *" className="col-span-2"><input className="campo" required value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></Campo>
+            <Campo rotulo="CPF (login) *"><input className="campo tabular" required inputMode="numeric" value={form.cpf} onChange={(e) => setForm({ ...form, cpf: mascaraCpf(e.target.value) })} /></Campo>
+            <Campo rotulo="Matrícula"><input className="campo" value={form.matricula} onChange={(e) => setForm({ ...form, matricula: e.target.value })} /></Campo>
+            <Campo rotulo={form.id ? 'Nova senha' : 'Senha inicial *'} dica={form.id ? 'Deixe em branco para manter a atual' : 'Mínimo 6 caracteres'}>
+              <input type="password" className="campo" required={!form.id} minLength={6} autoComplete="new-password" value={form.senha} onChange={(e) => setForm({ ...form, senha: e.target.value })} />
+            </Campo>
+            <Campo rotulo="Perfil nas Diárias" dica={form.proprio ? 'Você não pode alterar o seu próprio perfil' : undefined}>
+              <select className="campo" value={form.perfil} disabled={form.proprio} onChange={(e) => setForm({ ...form, perfil: e.target.value })}>
+                {form.id && <option value="">Sem acesso</option>}
                 {PERFIS.map((p) => <option key={p.valor} value={p.valor}>{p.rotulo}</option>)}
               </select>
             </Campo>
           </form>
+        )}
+      </Modal>
+
+      <Modal aberto={!!excluir} titulo={excluir?.criadoPelasDiarias ? 'Excluir usuário' : 'Remover acesso às Diárias'} onFechar={() => setExcluir(null)}
+        rodape={<><button type="button" className="btn-secundario" onClick={() => setExcluir(null)}>Cancelar</button>
+          <button type="button" className="btn-perigo" onClick={confirmarExclusao}>{excluir?.criadoPelasDiarias ? 'Excluir' : 'Remover acesso'}</button></>}>
+        {excluir && (
+          <p className="font-body-md text-body-md">
+            {excluir.criadoPelasDiarias
+              ? <>O usuário <strong>{excluir.nome}</strong> foi cadastrado pelas Diárias e será excluído da base. As diárias que ele lançou continuam registradas com o nome dele.</>
+              : <>O usuário <strong>{excluir.nome}</strong> pertence ao sistema da Carteira. Ele perderá o acesso às Diárias, mas continuará entrando normalmente na Carteira.</>}
+          </p>
         )}
       </Modal>
     </>

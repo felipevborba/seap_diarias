@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import CampoData from '../components/ui/CampoData';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Permitido } from '../components/layout/Layout';
 import { Alerta, CabecalhoPagina, Carregando, Icone, Paginacao, Vazio } from '../components/ui';
@@ -59,12 +60,12 @@ export default function Diarias() {
           </select>
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="rotulo">De</span>
-          <input type="date" className="campo" value={filtro.dataInicio} onChange={set('dataInicio')} />
+          <span className="rotulo">Data da diária: de</span>
+          <CampoData value={filtro.dataInicio} onChange={set('dataInicio')} />
         </label>
         <label className="flex flex-col gap-1.5">
-          <span className="rotulo">Até</span>
-          <input type="date" className="campo" value={filtro.dataFim} onChange={set('dataFim')} />
+          <span className="rotulo">Data da diária: até</span>
+          <CampoData value={filtro.dataFim} onChange={set('dataFim')} />
         </label>
         <label className="flex flex-col gap-1.5">
           <span className="rotulo">Situação</span>

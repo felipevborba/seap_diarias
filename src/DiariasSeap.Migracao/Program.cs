@@ -9,6 +9,7 @@ using Seap.Compartilhado.Dados;
 //
 //   ConnectionStrings__DefaultConnection="Host=...;Database=carteira;Username=...;Password=..." \
 //   dotnet run --project src/DiariasSeap.Migracao -- --dados ../legado/sisdiaria/dados [--relatorios dir] [--confirmar]
+//   --somente-origem: só preenche a cidade de origem das diárias já migradas (não apaga nem renumera).
 //   Opções: --aplicar-schema (só banco local; em produção o deploy da API aplica), --forcar (reexecuta mesmo com
 //   diárias migradas já alteradas no sistema novo — apaga esse trabalho).
 //
@@ -50,12 +51,12 @@ else
     await using var c = new Npgsql.NpgsqlConnection(conexao);
     await c.OpenAsync();
     await using var cmd = new Npgsql.NpgsqlCommand(
-        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '002_aprovacao_itens_legado.sql'", c);
+        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '003_cidade_origem_data_cadastro.sql'", c);
     long aplicado;
     try { aplicado = (long)(await cmd.ExecuteScalarAsync())!; } catch { aplicado = 0; }
     if (aplicado == 0)
     {
-        Log("ERRO — o banco ainda não tem o schema da versão 2 (002_aprovacao_itens_legado.sql). " +
+        Log("ERRO — o banco ainda não tem o schema desta versão (003_cidade_origem_data_cadastro.sql). " +
             "Faça o deploy da API v2 antes de migrar (ou use --aplicar-schema em banco local).");
         return 3;
     }
@@ -69,7 +70,8 @@ await using var db = new DiariasContext(options);
 
 try
 {
-    var n = await new Migrador(db, dados, relatorios, Log, args.Contains("--forcar")).ExecutarAsync(confirmar);
+    var migrador = new Migrador(db, dados, relatorios, Log, args.Contains("--forcar"));
+    var n = args.Contains("--somente-origem") ? await migrador.AtualizarOrigemAsync(confirmar) : await migrador.ExecutarAsync(confirmar);
     Log($"Fim: {n:N0} diárias em {(DateTime.Now - inicio).TotalSeconds:N0}s.");
     return 0;
 }

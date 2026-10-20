@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import CampoData from '../components/ui/CampoData';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api';
 import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, useAviso } from '../components/ui';
@@ -33,6 +34,8 @@ export default function DiariaForm() {
   const tipos = useTipos(true);
 
   const [servidor, setServidor] = useState(null);
+  const [origem, setOrigem] = useState(null);
+  const [origemTexto, setOrigemTexto] = useState(null);
   const [objetivo, setObjetivo] = useState('');
   const [processoSei, setProcessoSei] = useState('');
   const [observacao, setObservacao] = useState('');
@@ -54,6 +57,8 @@ export default function DiariaForm() {
       setSituacaoAtual(d.situacao);
       setLegado(d.origem === 'LEGADO' ? d.legadoCodigo : null);
       setServidor({ id: d.servidorId, nome: d.servidor, cpf: d.cpf, matricula: d.matricula });
+      setOrigem(d.cidadeOrigemId ? separarDestino(d.cidadeOrigem, d.cidadeOrigemId) : null);
+      setOrigemTexto(d.cidadeOrigemId ? null : d.cidadeOrigemTexto);
       setObjetivo(d.objetivo);
       setProcessoSei(d.processoSei || '');
       setObservacao(d.observacao || '');
@@ -85,6 +90,7 @@ export default function DiariaForm() {
 
   const requisicao = useMemo(() => ({
     servidorId: servidor?.id || 0,
+    origemMunicipioId: origem?.id ?? null,
     objetivo,
     processoSei,
     observacao,
@@ -95,7 +101,7 @@ export default function DiariaForm() {
       destinoMunicipioId: p.destino?.id ?? null,
       itens: p.itens.map((i) => ({ id: i.id, tipoDiariaId: Number(i.tipoDiariaId), quantidade: numero(i.quantidade) })),
     })),
-  }), [servidor, objetivo, processoSei, observacao, periodos]);
+  }), [servidor, origem, objetivo, processoSei, observacao, periodos]);
 
   // Pré-visualização: valores e conflitos calculados no servidor (mesma regra da gravação).
   useEffect(() => {
@@ -138,6 +144,7 @@ export default function DiariaForm() {
     e.preventDefault();
     setErro('');
     if (!servidor) { setErro('Selecione o servidor.'); return; }
+    if (!origem && !origemTexto) { setErro('Informe a cidade de origem da viagem.'); return; }
     if (requisicao.periodos.length !== periodos.length) { setErro('Preencha datas, destino e tipo de diária de todos os períodos.'); return; }
     setSalvando(true);
     const r = editando ? await api.put(`/api/diarias/${id}`, requisicao) : await api.post('/api/diarias', requisicao);
@@ -174,9 +181,17 @@ export default function DiariaForm() {
         <div className="xl:col-span-2 flex flex-col gap-gutter-grid">
           <section className="cartao p-padding-card flex flex-col gap-form-element-gap">
             <h3 className="font-headline-sm text-headline-sm text-primary">Servidor e objetivo</h3>
-            <Campo rotulo="Servidor *">
-              <SeletorServidor id="servidor" valor={servidor} onSelecionar={setServidor} />
-            </Campo>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-form-element-gap">
+              <Campo rotulo="Servidor *" className="md:col-span-2">
+                <SeletorServidor id="servidor" valor={servidor} onSelecionar={setServidor} />
+              </Campo>
+              <Campo rotulo="Cidade de origem *">
+                <SeletorMunicipio id="origem" valor={origem} onSelecionar={(m) => { setOrigem(m); if (m) setOrigemTexto(null); }} placeholder="De onde parte a viagem" />
+              </Campo>
+            </div>
+            {origemTexto && !origem && (
+              <Alerta tipo="aviso">Cidade de origem no sistema antigo: <strong>{origemTexto}</strong> (sem município identificado). Selecione o município, se souber.</Alerta>
+            )}
             <Campo rotulo="Objetivo da viagem *">
               <textarea className="campo min-h-[80px]" required maxLength={1000} value={objetivo} onChange={(e) => setObjetivo(e.target.value)}
                 placeholder="Ex.: Escolta de custodiado para audiência na comarca de Caruaru" />
@@ -217,10 +232,10 @@ export default function DiariaForm() {
                     </div>
                     <div className="grid grid-cols-2 lg:grid-cols-12 gap-3">
                       <Campo rotulo="Início *" className="lg:col-span-3">
-                        <input type="date" className="campo" required value={p.dataInicio} onChange={(e) => alterarPeriodo(p.chave, 'dataInicio', e.target.value)} />
+                        <CampoData required value={p.dataInicio} onChange={(e) => alterarPeriodo(p.chave, 'dataInicio', e.target.value)} />
                       </Campo>
                       <Campo rotulo="Fim *" className="lg:col-span-3">
-                        <input type="date" className="campo" required min={p.dataInicio} value={p.dataFim} onChange={(e) => alterarPeriodo(p.chave, 'dataFim', e.target.value)} />
+                        <CampoData required min={p.dataInicio} value={p.dataFim} onChange={(e) => alterarPeriodo(p.chave, 'dataFim', e.target.value)} />
                       </Campo>
                       <Campo rotulo="Destino *" className="col-span-2 lg:col-span-6">
                         <SeletorMunicipio valor={p.destino} onSelecionar={(m) => alterarPeriodo(p.chave, 'destino', m)} />

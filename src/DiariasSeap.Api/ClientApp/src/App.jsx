@@ -13,6 +13,7 @@ import Servidores from './pages/Servidores';
 import TabelaValores from './pages/TabelaValores';
 import Regioes from './pages/Regioes';
 import Cargos from './pages/Cargos';
+import Lotacoes from './pages/Lotacoes';
 import Usuarios from './pages/Usuarios';
 import Auditoria from './pages/Auditoria';
 
@@ -34,6 +35,7 @@ const rotas = [
       { path: '/tabela-valores', element: <TabelaValores /> },
       { path: '/regioes', element: <Regioes /> },
       { path: '/cargos', element: <Cargos /> },
+      { path: '/lotacoes', element: <Lotacoes /> },
       { path: '/usuarios', element: <Usuarios /> },
       { path: '/auditoria', element: <Auditoria /> },
     ],

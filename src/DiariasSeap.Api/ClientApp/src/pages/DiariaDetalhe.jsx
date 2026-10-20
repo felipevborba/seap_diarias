@@ -108,6 +108,8 @@ export default function DiariaDetalhe() {
               <Info rotulo="Vínculo">{d.vinculo}</Info>
               <Info rotulo="Cargo">{d.cargo}</Info>
               <Info rotulo="Lotação">{d.unidade}</Info>
+              <Info rotulo="Cidade de origem">{d.cidadeOrigem}{!d.cidadeOrigemId && d.cidadeOrigemTexto ? ' (texto do sistema antigo)' : ''}</Info>
+              <Info rotulo="Data do cadastro">{fmtDataHora(d.criadoEm)}</Info>
               <Info rotulo="Processo SEI">{d.processoSei}</Info>
               <div className="col-span-2 md:col-span-3"><Info rotulo="Objetivo">{d.objetivo}</Info></div>
               {d.observacao && <div className="col-span-2 md:col-span-3"><Info rotulo="Observação">{d.observacao}</Info></div>}

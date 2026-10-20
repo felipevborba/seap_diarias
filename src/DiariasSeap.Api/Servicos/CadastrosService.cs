@@ -14,6 +14,8 @@ public record TipoDiariaDto(int Id, string Nome, string? Descricao, bool Ativo);
 public record TipoDiariaRequest(string Nome, string? Descricao, bool Ativo);
 public record ValorDiariaDto(int Id, int TipoDiariaId, string TipoDiaria, Vinculo? Vinculo, int? CargoId, string? Cargo,
     decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim);
+public record LotacaoDto(int Id, string? Sigla, string Nome, int Policiais, int Servidores, int Diarias);
+public record LotacaoRequest(string? Sigla, string Nome);
 public record ValorDiariaRequest(int TipoDiariaId, Vinculo? Vinculo, int? CargoId, decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim);
 
 /// <summary>Cadastros de apoio: cargos e regiões (schema comum) e tipos/valores de diária (schema diarias).</summary>
@@ -101,6 +103,59 @@ public class CadastrosService
         tipo.Ativo = req.Ativo;
         await _db.SaveChangesAsync();
         return tipo.Id;
+    }
+
+    /// <summary>Exclui o tipo (e suas linhas da tabela de valores) se nenhuma diária o usa; caso contrário, oriente a desativar.</summary>
+    public async Task ExcluirTipoAsync(int id)
+    {
+        var tipo = await _db.TiposDiaria.FindAsync(id) ?? throw new NaoEncontradoException("Tipo não encontrado.");
+        var usos = await _db.DiariasItens.CountAsync(i => i.TipoDiariaId == id);
+        if (usos > 0)
+            throw new RegraNegocioException($"O tipo \"{tipo.Nome}\" é usado em {usos:N0} lançamentos e não pode ser excluído. Desative-o para que não apareça em novos lançamentos.");
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        _db.ValoresDiaria.RemoveRange(await _db.ValoresDiaria.Where(v => v.TipoDiariaId == id).ToListAsync());
+        _db.TiposDiaria.Remove(tipo);
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+    }
+
+    // ---------- Lotações (public.unidade, compartilhada com a Carteira) ----------
+    public async Task<List<LotacaoDto>> LotacoesAsync() =>
+        await _db.Unidades.AsNoTracking().OrderBy(u => u.Nome)
+            .Select(u => new LotacaoDto(u.Id, u.Sigla, u.Nome,
+                _db.PoliciaisPenais.Count(p => p.UnidadeId == u.Id),
+                _db.Servidores.Count(s => s.UnidadeId == u.Id),
+                _db.Diarias.Count(d => d.UnidadeId == u.Id)))
+            .ToListAsync();
+
+    public async Task<int> SalvarLotacaoAsync(int? id, LotacaoRequest req)
+    {
+        var nome = Obrigatorio(req.Nome, "Informe o nome da lotação.");
+        var sigla = string.IsNullOrWhiteSpace(req.Sigla) ? null : req.Sigla.Trim().ToUpperInvariant();
+        if (await _db.Unidades.AnyAsync(u => u.Nome.ToLower() == nome.ToLower() && u.Id != id))
+            throw new RegraNegocioException("Já existe lotação com este nome.");
+        if (sigla != null && await _db.Unidades.AnyAsync(u => u.Sigla != null && u.Sigla.ToUpper() == sigla && u.Id != id))
+            throw new RegraNegocioException("Já existe lotação com esta sigla.");
+        var unidade = id.HasValue
+            ? await _db.Unidades.FindAsync(id.Value) ?? throw new NaoEncontradoException("Lotação não encontrada.")
+            : _db.Unidades.Add(new Unidade()).Entity;
+        unidade.Nome = nome.ToUpperInvariant();
+        unidade.Sigla = sigla;
+        await _db.SaveChangesAsync();
+        return unidade.Id;
+    }
+
+    /// <summary>Exclusão só de lotação sem uso (policiais da Carteira, servidores ou diárias impedem).</summary>
+    public async Task ExcluirLotacaoAsync(int id)
+    {
+        var unidade = await _db.Unidades.FindAsync(id) ?? throw new NaoEncontradoException("Lotação não encontrada.");
+        var policiais = await _db.PoliciaisPenais.CountAsync(p => p.UnidadeId == id);
+        var servidores = await _db.Servidores.CountAsync(s => s.UnidadeId == id);
+        var diarias = await _db.Diarias.CountAsync(d => d.UnidadeId == id);
+        if (policiais + servidores + diarias > 0)
+            throw new RegraNegocioException($"A lotação está em uso ({policiais:N0} policiais na Carteira, {servidores:N0} servidores, {diarias:N0} diárias) e não pode ser excluída.");
+        _db.Unidades.Remove(unidade);
+        await _db.SaveChangesAsync();
     }
 
     // ---------- Tabela de valores ----------

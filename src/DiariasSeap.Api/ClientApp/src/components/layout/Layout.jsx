@@ -15,6 +15,7 @@ const MENU = [
   { para: '/analises', icone: 'insights', rotulo: 'Análises' },
   { secao: 'Cadastros' },
   { para: '/servidores', icone: 'badge', rotulo: 'Servidores' },
+  { para: '/lotacoes', icone: 'domain', rotulo: 'Lotações' },
   { para: '/tabela-valores', icone: 'payments', rotulo: 'Tabela de Valores' },
   { para: '/regioes', icone: 'map', rotulo: 'Regiões' },
   { para: '/cargos', icone: 'work', rotulo: 'Cargos', perfis: ['ADMIN'] },

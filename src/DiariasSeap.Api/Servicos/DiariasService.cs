@@ -11,7 +11,8 @@ namespace DiariasSeap.Api.Servicos;
 
 public record ItemRequest(int? Id, int TipoDiariaId, decimal? Quantidade);
 public record PeriodoRequest(int? Id, DateOnly DataInicio, DateOnly DataFim, int? DestinoMunicipioId, List<ItemRequest> Itens);
-public record DiariaRequest(int ServidorId, string Objetivo, string? ProcessoSei, string? Observacao, List<PeriodoRequest> Periodos);
+public record DiariaRequest(int ServidorId, string Objetivo, string? ProcessoSei, string? Observacao, List<PeriodoRequest> Periodos,
+    int? OrigemMunicipioId = null);
 public record MotivoRequest(string Motivo);
 
 public record ItemCalculadoDto(int? Id, int TipoDiariaId, string TipoDiaria, decimal Quantidade, decimal ValorUnitario, decimal ValorTotal);
@@ -28,7 +29,8 @@ public record DiariaListaDto(int Id, int ServidorId, string Servidor, string? Cp
 public record DiariaDto(int Id, int ServidorId, string Servidor, string? Cpf, string? Matricula, Vinculo Vinculo, string? Cargo,
     string? Unidade, string Objetivo, string? ProcessoSei, string? Observacao, string Situacao, string? MotivoCancelamento,
     string? MotivoRejeicao, string? DecididoPorNome, DateTime? DecididoEm, decimal ValorTotal, string Origem, int? LegadoCodigo,
-    string? CriadoPorNome, DateTime CriadoEm, DateTime AtualizadoEm, List<PeriodoCalculadoDto> Periodos);
+    string? CriadoPorNome, DateTime CriadoEm, DateTime AtualizadoEm, List<PeriodoCalculadoDto> Periodos,
+    int? CidadeOrigemId, string? CidadeOrigem, string? CidadeOrigemTexto);
 public record HistoricoDto(long Id, string Entidade, string EntidadeId, string Acao, string? UsuarioNome, DateTime DataHora,
     JsonElement Alteracoes);
 
@@ -109,6 +111,7 @@ public class DiariasService
     {
         var d = await _db.Diarias.AsNoTracking()
             .Include(x => x.Servidor).Include(x => x.Cargo).Include(x => x.Unidade)
+            .Include(x => x.OrigemMunicipio).ThenInclude(m => m!.Uf)
             .Include(x => x.Periodos).ThenInclude(p => p.Itens).ThenInclude(i => i.TipoDiaria)
             .Include(x => x.Periodos).ThenInclude(p => p.DestinoMunicipio).ThenInclude(m => m!.Uf)
             .AsSplitQuery()
@@ -124,7 +127,9 @@ public class DiariasService
                 p.DestinoTexto, p.IsentoSobreposicao,
                 p.Itens.OrderBy(i => i.TipoDiariaId).Select(i => new ItemCalculadoDto(i.Id, i.TipoDiariaId, i.TipoDiaria.Nome,
                     i.Quantidade, i.ValorUnitario, i.ValorTotal)).ToList(),
-                p.ValorTotal)).ToList());
+                p.ValorTotal)).ToList(),
+            d.OrigemMunicipioId, d.OrigemMunicipio != null ? $"{d.OrigemMunicipio.Nome}/{d.OrigemMunicipio.Uf.Sigla}" : d.OrigemTexto,
+            d.OrigemTexto);
     }
 
     public async Task<List<HistoricoDto>> HistoricoAsync(int id)
@@ -261,6 +266,8 @@ public class DiariasService
     private async Task<int> GravarAsync(int? id, DiariaRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.Objetivo)) throw new RegraNegocioException("Informe o objetivo da viagem.");
+        if (req.OrigemMunicipioId.HasValue && !await _db.Municipios.AnyAsync(m => m.Id == req.OrigemMunicipioId))
+            throw new RegraNegocioException("Cidade de origem inválida.");
 
         await using var tx = await _db.Database.BeginTransactionAsync();
         // Serializa lançamentos do mesmo servidor: sem isso, dois operadores simultâneos passariam
@@ -302,6 +309,10 @@ public class DiariasService
             diaria.CargoId = cargoId;
             diaria.UnidadeId = servidor.UnidadeId;
         }
+        // Cidade de origem: obrigatória; na edição de diária migrada sem município, o texto do legado é mantido.
+        if (req.OrigemMunicipioId.HasValue) diaria.OrigemMunicipioId = req.OrigemMunicipioId;
+        else if (diaria.OrigemMunicipioId == null && string.IsNullOrWhiteSpace(diaria.OrigemTexto))
+            throw new RegraNegocioException("Informe a cidade de origem da viagem.");
         diaria.Objetivo = req.Objetivo.Trim();
         diaria.ProcessoSei = string.IsNullOrWhiteSpace(req.ProcessoSei) ? null : req.ProcessoSei.Trim();
         diaria.Observacao = string.IsNullOrWhiteSpace(req.Observacao) ? null : req.Observacao.Trim();

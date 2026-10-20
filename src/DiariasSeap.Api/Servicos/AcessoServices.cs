@@ -57,25 +57,29 @@ public class AcessoNegadoException : Exception
     public AcessoNegadoException(string mensagem) : base(mensagem) { }
 }
 
-public record UsuarioDto(int Id, string Nome, string? Matricula, string? Cpf, bool AdministradorGeral, string? Perfil);
+public record UsuarioDto(int Id, string Nome, string? Matricula, string? Cpf, bool AdministradorGeral, string? Perfil, bool CriadoPelasDiarias);
 public record DefinirPerfilRequest(string? Perfil);
 public record CriarUsuarioRequest(string Nome, string Cpf, string? Matricula, string Senha, string Perfil);
+public record EditarUsuarioRequest(string Nome, string Cpf, string? Matricula, string? NovaSenha, string? Perfil);
+public record ExclusaoUsuarioDto(bool RemovidoDoBanco, string Mensagem);
 
 /// <summary>
-/// Gestão de acesso ao módulo. Os usuários são os mesmos do CarteiraPenal: aqui se concede/revoga o
-/// perfil das Diárias. Criar usuário novo grava em public.usuario e, enquanto o CarteiraPenal não
-/// verificar perfil por módulo, esse usuário também conseguiria entrar na Carteira; por isso a criação
-/// fica desligada por padrão (Usuarios:PermitirCriacao).
+/// Gestão de usuários do módulo. Os usuários são os mesmos do CarteiraPenal (public.usuario): editar nome, CPF,
+/// matrícula ou senha vale para os dois sistemas. Atenção: enquanto o CarteiraPenal não verificar perfil por módulo,
+/// um usuário criado aqui também consegue entrar na Carteira (Usuarios:PermitirCriacao controla a criação).
+/// Exclusão: usuário criado pelas Diárias é removido do banco; usuário da Carteira só perde o acesso às Diárias.
 /// </summary>
 public class UsuariosService
 {
     private readonly DiariasContext _db;
     private readonly IConfiguration _config;
+    private readonly Seap.Compartilhado.Auditoria.IUsuarioAtual _usuarioAtual;
 
-    public UsuariosService(DiariasContext db, IConfiguration config)
+    public UsuariosService(DiariasContext db, IConfiguration config, Seap.Compartilhado.Auditoria.IUsuarioAtual usuarioAtual)
     {
         _db = db;
         _config = config;
+        _usuarioAtual = usuarioAtual;
     }
 
     public bool CriacaoPermitida => _config.GetValue<bool>("Usuarios:PermitirCriacao");
@@ -101,7 +105,9 @@ public class UsuariosService
         var total = await q.CountAsync();
         var itens = await q.OrderBy(x => x.u.Nome).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(x => new UsuarioDto(x.u.Id, x.u.Nome, x.u.Matricula, x.u.Documento, x.u.Principal == 'S',
-                x.Perfil ?? (x.u.Principal == 'S' ? Perfis.Administrador : null)))
+                x.Perfil ?? (x.u.Principal == 'S' ? Perfis.Administrador : null),
+                _db.Auditoria.Any(a => a.Modulo == DiariasContext.Modulo && a.Entidade == "usuario" && a.Acao == "INCLUSAO"
+                                       && a.EntidadeId == x.u.Id.ToString())))
             .ToListAsync();
         return new PagedResult<UsuarioDto>(itens, page, pageSize, total);
     }
@@ -151,9 +157,86 @@ public class UsuariosService
         _db.Usuarios.Add(usuario);
         await _db.SaveChangesAsync();
         _db.UsuariosPerfis.Add(new UsuarioPerfil { UsuarioId = usuario.Id, Modulo = DiariasContext.Modulo, Perfil = req.Perfil });
+        // Marca a origem: usuários criados pelas Diárias podem ser excluídos daqui (os da Carteira, não).
+        _db.Auditoria.Add(new Seap.Compartilhado.Auditoria.RegistroAuditoria
+        {
+            Modulo = DiariasContext.Modulo, Entidade = "usuario", EntidadeId = usuario.Id.ToString(), RaizEntidade = "usuario",
+            RaizId = usuario.Id.ToString(), Acao = "INCLUSAO", UsuarioId = _usuarioAtual.Id, UsuarioNome = _usuarioAtual.Nome,
+            DataHora = DateTime.UtcNow,
+            Alteracoes = System.Text.Json.JsonSerializer.Serialize(new { Nome = new { de = (string?)null, para = usuario.Nome }, Perfil = new { de = (string?)null, para = req.Perfil } })
+        });
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
         return usuario.Id;
+    }
+
+    public async Task EditarAsync(int id, EditarUsuarioRequest req, int? usuarioLogadoId)
+    {
+        var usuario = await _db.Usuarios.FindAsync(id) ?? throw new NaoEncontradoException("Usuário não encontrado.");
+        var cpf = CifraDelphi.SomenteDigitos(req.Cpf);
+        if (!Cpf.Valido(cpf)) throw new RegraNegocioException("CPF inválido.");
+        if (string.IsNullOrWhiteSpace(req.Nome)) throw new RegraNegocioException("Informe o nome.");
+        if (await _db.Usuarios.AnyAsync(u => u.Documento == cpf && u.Id != id))
+            throw new RegraNegocioException("Já existe outro usuário com este CPF.");
+        if (!string.IsNullOrEmpty(req.NovaSenha) && req.NovaSenha.Length < 6)
+            throw new RegraNegocioException("A senha deve ter ao menos 6 caracteres.");
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        var alteracoes = new Dictionary<string, object?>();
+        void Mudou(string campo, object? de, object? para) { if (!Equals(de, para)) alteracoes[campo] = new { de, para }; }
+        Mudou("Nome", usuario.Nome, req.Nome.Trim());
+        Mudou("Cpf", usuario.Documento, cpf);
+        Mudou("Matricula", usuario.Matricula, string.IsNullOrWhiteSpace(req.Matricula) ? null : req.Matricula.Trim());
+        usuario.Nome = req.Nome.Trim();
+        usuario.Documento = cpf;
+        usuario.Matricula = string.IsNullOrWhiteSpace(req.Matricula) ? null : req.Matricula.Trim();
+        if (!string.IsNullOrEmpty(req.NovaSenha))
+        {
+            usuario.Senha = CifraDelphi.Criptografar(req.NovaSenha);
+            alteracoes["Senha"] = new { de = "***", para = "*** (redefinida)" };
+        }
+        await _db.SaveChangesAsync();
+        // public.usuario não é auditado automaticamente (tabela da Carteira): registra a alteração aqui.
+        if (alteracoes.Count > 0)
+            _db.Auditoria.Add(new Seap.Compartilhado.Auditoria.RegistroAuditoria
+            {
+                Modulo = DiariasContext.Modulo, Entidade = "usuario", EntidadeId = id.ToString(), RaizEntidade = "usuario", RaizId = id.ToString(),
+                Acao = "ALTERACAO", UsuarioId = _usuarioAtual.Id, UsuarioNome = _usuarioAtual.Nome, DataHora = DateTime.UtcNow,
+                Alteracoes = System.Text.Json.JsonSerializer.Serialize(alteracoes)
+            });
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+        if (req.Perfil != null || id != usuarioLogadoId)
+            await DefinirPerfilAsync(id, string.IsNullOrEmpty(req.Perfil) ? null : req.Perfil, usuarioLogadoId);
+    }
+
+    public async Task<ExclusaoUsuarioDto> ExcluirAsync(int id, int? usuarioLogadoId)
+    {
+        if (id == usuarioLogadoId) throw new RegraNegocioException("Você não pode excluir o seu próprio usuário.");
+        var usuario = await _db.Usuarios.FindAsync(id) ?? throw new NaoEncontradoException("Usuário não encontrado.");
+        if (usuario.EhAdministradorGeral)
+            throw new RegraNegocioException("O administrador geral da Carteira não pode ser excluído por aqui.");
+
+        var idTexto = id.ToString();
+        var criadoPelasDiarias = await _db.Auditoria.AnyAsync(a => a.Modulo == DiariasContext.Modulo && a.Entidade == "usuario"
+                                                                   && a.EntidadeId == idTexto && a.Acao == "INCLUSAO");
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        var perfil = await _db.UsuariosPerfis.FirstOrDefaultAsync(p => p.UsuarioId == id && p.Modulo == DiariasContext.Modulo);
+        if (perfil != null) _db.UsuariosPerfis.Remove(perfil);
+        if (criadoPelasDiarias) _db.Usuarios.Remove(usuario);
+        await _db.SaveChangesAsync();
+        _db.Auditoria.Add(new Seap.Compartilhado.Auditoria.RegistroAuditoria
+        {
+            Modulo = DiariasContext.Modulo, Entidade = "usuario", EntidadeId = idTexto, RaizEntidade = "usuario", RaizId = idTexto,
+            Acao = "EXCLUSAO", UsuarioId = _usuarioAtual.Id, UsuarioNome = _usuarioAtual.Nome, DataHora = DateTime.UtcNow,
+            Alteracoes = System.Text.Json.JsonSerializer.Serialize(new { Nome = new { de = usuario.Nome, para = (string?)null },
+                Escopo = new { de = (string?)null, para = criadoPelasDiarias ? "removido do banco" : "acesso às Diárias revogado (mantido na Carteira)" } })
+        });
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+        return criadoPelasDiarias
+            ? new ExclusaoUsuarioDto(true, "Usuário excluído.")
+            : new ExclusaoUsuarioDto(false, "Acesso às Diárias removido. O usuário continua existindo no sistema da Carteira.");
     }
 }
 

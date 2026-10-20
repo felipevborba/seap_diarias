@@ -56,7 +56,7 @@ public class Migrador
         int Codigo, string Status, string ServidorChave, string? Cpf, string? Matricula, string? Nome,
         string? Funcao, string? Cargo, string? Unidade, DateOnly Ida, DateOnly Volta, bool DatasInvertidas,
         decimal IntQtd, decimal IntUnit, decimal IntTotal, decimal ParQtd, decimal ParUnit, decimal ParTotal,
-        string DestinoTexto, string? DestinoUf, string? Finalidade, string? Motivacao, string? Sei, string? Obs,
+        string DestinoTexto, string? DestinoUf, string? OrigemTexto, string? OrigemUf, string? Finalidade, string? Motivacao, string? Sei, string? Obs,
         string? Passagem, string Cadastrador, DateTime CriadoEm, string? DatasCorrigidas = null);
 
     // ---------------------------------------------------------------- execução
@@ -146,6 +146,46 @@ public class Migrador
         return n;
     }
 
+    /// <summary>
+    /// Preenche só a cidade de origem das diárias já migradas (por código do legado), sem apagar nem renumerar nada —
+    /// para bancos em uso. Atualiza apenas diárias de origem LEGADO ainda sem cidade de origem.
+    /// </summary>
+    public async Task<int> AtualizarOrigemAsync(bool confirmar)
+    {
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        await _db.Database.ExecuteSqlRawAsync(
+            "SET LOCAL tcp_keepalives_idle = 30; SET LOCAL tcp_keepalives_interval = 10; SET LOCAL tcp_keepalives_count = 3; " +
+            "SET LOCAL idle_in_transaction_session_timeout = '5min'");
+        var municipios = await CarregarMunicipiosAsync();
+        var legado = Ler("diaria");
+        var linhas = new List<object?[]>();
+        var semMunicipio = new Dictionary<string, int>();
+        foreach (var r in legado)
+        {
+            var texto = Texto.Limpo(r["cidade_origem"]);
+            if (texto == null) continue;
+            var id = Municipio(municipios, texto, Texto.Uf(r["uf_origem"]));
+            if (id == null) semMunicipio[texto] = semMunicipio.GetValueOrDefault(texto) + 1;
+            linhas.Add(new object?[] { int.Parse(r["codigo"]!), id, Texto.Cortar(texto, 300) });
+        }
+        var conn = (NpgsqlConnection)_db.Database.GetDbConnection();
+        await _db.Database.ExecuteSqlRawAsync("CREATE TEMP TABLE origem_legado (codigo int, municipio_id int, texto varchar(300)) ON COMMIT DROP");
+        await CopiarAsync(conn, "origem_legado (codigo, municipio_id, texto)", linhas,
+            new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Varchar });
+        var n = await _db.Database.ExecuteSqlRawAsync(
+            "UPDATE diarias.diaria d SET origem_municipio_id = o.municipio_id, origem_texto = o.texto " +
+            "FROM origem_legado o WHERE d.legado_codigo = o.codigo AND d.origem = 'LEGADO' " +
+            "AND d.origem_municipio_id IS NULL AND d.origem_texto IS NULL");
+        foreach (var (texto, qtd) in semMunicipio.OrderByDescending(x => x.Value))
+            Relatar("origens_sem_municipio.tsv", texto, qtd.ToString());
+        _log($"Cidade de origem: {n:N0} diárias atualizadas ({linhas.Count(l => l[1] != null):N0} com município identificado; " +
+             $"{semMunicipio.Values.Sum():N0} só com o texto do legado — relatório origens_sem_municipio.tsv).");
+        EscreverRelatorios();
+        if (confirmar) { await tx.CommitAsync(); _log("ATUALIZAÇÃO CONFIRMADA (commit)."); }
+        else { await tx.RollbackAsync(); _log("Ensaio concluído: nada foi gravado (use --confirmar para efetivar)."); }
+        return n;
+    }
+
     // ---------------------------------------------------------------- etapas
 
     private sealed record CorrecaoData(string IdaLegado, string VoltaLegado, DateOnly Ida, DateOnly Volta, string Evidencias);
@@ -231,6 +271,7 @@ public class Migrador
                 Texto.Decimal(r["integrais_quantidade"]), Texto.Decimal(r["integrais_valor_unitario"]), Texto.Decimal(r["integrais_valor_total"]),
                 Texto.Decimal(r["parciais_quantidade"]), Texto.Decimal(r["parciais_valor_unitario"]), Texto.Decimal(r["parciais_valor_total"]),
                 Texto.Limpo(r["cidade_destino"]) ?? "NÃO INFORMADO", Texto.Uf(r["uf_cidade"]),
+                Texto.Limpo(r["cidade_origem"]), Texto.Uf(r["uf_origem"]),
                 Texto.Limpo(r["finalidade"]), Texto.Limpo(r["motivacao"]), Texto.Limpo(r["numeroSei"]), Texto.Limpo(r["obs"]),
                 passagem, r["cadastrador"] ?? "0",
                 DateTime.SpecifyKind(criado.ToDateTime(new TimeOnly(12, 0)), DateTimeKind.Utc), datasCorrigidas));
@@ -503,7 +544,9 @@ public class Migrador
                 unidade, Texto.Cortar(objetivo, 1000)!, Texto.Cortar(d.Sei, 50), Texto.Cortar(obs.Count > 0 ? string.Join(" | ", obs) : null, 2000),
                 situacao, total, Origens.Legado, d.Codigo, NomeCadastrador(cadastradores, d.Cadastrador), d.CriadoEm, d.CriadoEm,
                 situacao == SituacaoDiaria.Aprovada ? "Aprovada no sistema legado" : null,
-                situacao == SituacaoDiaria.Aprovada ? d.CriadoEm : null
+                situacao == SituacaoDiaria.Aprovada ? d.CriadoEm : null,
+                d.OrigemTexto == null ? null : Municipio(municipios, d.OrigemTexto, d.OrigemUf),
+                Texto.Cortar(d.OrigemTexto, 300)
             });
             linhasPeriodo.Add(new object?[]
             {
@@ -515,11 +558,12 @@ public class Migrador
         }
 
         await CopiarAsync(conn, "diarias.diaria (id, servidor_id, vinculo, cargo_id, unidade_id, objetivo, processo_sei, observacao, " +
-            "situacao, valor_total, origem, legado_codigo, criado_por_nome, criado_em, atualizado_em, decidido_por_nome, decidido_em)",
+            "situacao, valor_total, origem, legado_codigo, criado_por_nome, criado_em, atualizado_em, decidido_por_nome, decidido_em, " +
+            "origem_municipio_id, origem_texto)",
             linhasDiaria, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Smallint, NpgsqlDbType.Integer, NpgsqlDbType.Integer,
                 NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Numeric,
                 NpgsqlDbType.Varchar, NpgsqlDbType.Integer, NpgsqlDbType.Varchar, NpgsqlDbType.TimestampTz, NpgsqlDbType.TimestampTz,
-                NpgsqlDbType.Varchar, NpgsqlDbType.TimestampTz });
+                NpgsqlDbType.Varchar, NpgsqlDbType.TimestampTz, NpgsqlDbType.Integer, NpgsqlDbType.Varchar });
         await CopiarAsync(conn, "diarias.diaria_periodo (id, diaria_id, servidor_id, data_inicio, data_fim, destino_municipio_id, " +
             "destino_texto, valor_total, ativo, isento_sobreposicao)",
             linhasPeriodo, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Date, NpgsqlDbType.Date,
@@ -597,6 +641,7 @@ public class Migrador
             ["diarias_sem_itens.tsv"] = "codigo\tservidor\tida",
             ["diarias_nao_migradas.tsv"] = "codigo\tmotivo\tservidor",
             ["datas_futuras_suspeitas.tsv"] = "codigo\tservidor\tida\tvolta\tdata_cadastro",
+            ["origens_sem_municipio.tsv"] = "texto_legado\tdiarias",
             ["datas_corrigidas.tsv"] = "codigo\tservidor\tida_legado\tvolta_legado\tida_corrigida\tvolta_corrigida\tevidencias",
             ["correcoes_de_data_ignoradas.tsv"] = "codigo\tsituacao_no_legado\tesperado",
         };

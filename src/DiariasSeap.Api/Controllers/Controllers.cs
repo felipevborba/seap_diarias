@@ -188,6 +188,33 @@ public class CadastrosController : ControllerBase
     [Authorize(Policy = Politicas.Gestao)]
     public async Task<IActionResult> AtualizarTipo(int id, [FromBody] TipoDiariaRequest req) => this.Sucesso(await _svc.SalvarTipoAsync(id, req), "Tipo salvo.");
 
+    [HttpDelete("tipos/{id:int}")]
+    [Authorize(Policy = Politicas.Gestao)]
+    public async Task<IActionResult> ExcluirTipo(int id)
+    {
+        await _svc.ExcluirTipoAsync(id);
+        return this.Sucesso(true, "Tipo de diária excluído.");
+    }
+
+    [HttpGet("lotacoes")]
+    public async Task<IActionResult> Lotacoes() => this.Sucesso(await _svc.LotacoesAsync());
+
+    [HttpPost("lotacoes")]
+    [Authorize(Policy = Politicas.Gestao)]
+    public async Task<IActionResult> CriarLotacao([FromBody] LotacaoRequest req) => this.Sucesso(await _svc.SalvarLotacaoAsync(null, req), "Lotação cadastrada.");
+
+    [HttpPut("lotacoes/{id:int}")]
+    [Authorize(Policy = Politicas.Gestao)]
+    public async Task<IActionResult> AtualizarLotacao(int id, [FromBody] LotacaoRequest req) => this.Sucesso(await _svc.SalvarLotacaoAsync(id, req), "Lotação atualizada.");
+
+    [HttpDelete("lotacoes/{id:int}")]
+    [Authorize(Policy = Politicas.Gestao)]
+    public async Task<IActionResult> ExcluirLotacao(int id)
+    {
+        await _svc.ExcluirLotacaoAsync(id);
+        return this.Sucesso(true, "Lotação excluída.");
+    }
+
     [HttpGet("valores")]
     public async Task<IActionResult> Valores([FromQuery] int? tipoDiariaId, [FromQuery] bool somenteVigentes = false)
         => this.Sucesso(await _svc.ValoresAsync(tipoDiariaId, somenteVigentes));
@@ -247,7 +274,7 @@ public class RelatoriosController : ControllerBase
             $"diarias_controladoria_{DateTime.Now:yyyyMMdd_HHmm}.xlsx");
 
     [HttpGet("dashboard")]
-    public async Task<IActionResult> Dashboard([FromQuery] int? ano) => this.Sucesso(await _svc.DashboardAsync(ano ?? DateTime.Today.Year));
+    public async Task<IActionResult> Dashboard([FromQuery] RelatorioFiltro f) => this.Sucesso(await _svc.DashboardAsync(f));
 
     [HttpGet("auditoria")]
     [Authorize(Policy = Politicas.Gestao)]
@@ -271,8 +298,10 @@ public class AnalisesController : ControllerBase
     [HttpGet("ranking/{dimensao}")]
     public async Task<IActionResult> Ranking(string dimensao, [FromQuery] RelatorioFiltro f) => this.Sucesso(await _svc.RankingAsync(dimensao, f));
 
+    /// <summary>Evolução no tempo; baseData = "diaria" (início do período, padrão) ou "cadastro" (data do lançamento).</summary>
     [HttpGet("serie")]
-    public async Task<IActionResult> Serie([FromQuery] RelatorioFiltro f) => this.Sucesso(await _svc.SerieAsync(f));
+    public async Task<IActionResult> Serie([FromQuery] RelatorioFiltro f, [FromQuery] string? baseData)
+        => this.Sucesso(await _svc.SerieAsync(f, baseData == "cadastro"));
 }
 
 [ApiController]
@@ -303,4 +332,20 @@ public class UsuariosController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Criar([FromBody] CriarUsuarioRequest req)
         => this.Sucesso(await _svc.CriarAsync(req), "Usuário criado.");
+
+    [HttpPut("{id:int}")]
+    public async Task<IActionResult> Editar(int id, [FromBody] EditarUsuarioRequest req)
+    {
+        int? atual = int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : null;
+        await _svc.EditarAsync(id, req, atual);
+        return this.Sucesso(true, "Usuário atualizado.");
+    }
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Excluir(int id)
+    {
+        int? atual = int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var u) ? u : null;
+        var r = await _svc.ExcluirAsync(id, atual);
+        return this.Sucesso(r, r.Mensagem);
+    }
 }

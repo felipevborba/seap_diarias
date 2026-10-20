@@ -1,3 +1,5 @@
+using Seap.Compartilhado.Auditoria;
+
 namespace Seap.Compartilhado.Modelos;
 
 // Tabelas do schema "public", criadas e mantidas pelo CarteiraPenal (scripts/install.sql daquele projeto).
@@ -18,8 +20,8 @@ public class Usuario
     public bool EhAdministradorGeral => Principal == 'S';
 }
 
-/// <summary>Unidade prisional / de lotação.</summary>
-public class Unidade
+/// <summary>Unidade prisional / de lotação (cadastro compartilhado com a Carteira; alterações são auditadas).</summary>
+public class Unidade : IAuditavel
 {
     public int Id { get; set; }
     public string? Sigla { get; set; }

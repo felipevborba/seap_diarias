@@ -25,7 +25,7 @@ public record VisaoGeralDto(RelatorioTotaisDto Totais, decimal ValorMedioPorDiar
 /// </summary>
 public class AnalisesService
 {
-    public static readonly string[] Dimensoes = { "lotacao", "servidor", "destino", "regiao", "tipo", "vinculo", "cargo", "origem", "situacao" };
+    public static readonly string[] Dimensoes = { "lotacao", "servidor", "destino", "cidadeOrigem", "regiao", "tipo", "vinculo", "cargo", "origem", "situacao" };
     private const decimal LimiteA = 80m, LimiteB = 95m;
     private const int MaxItensRanking = 500;
 
@@ -98,6 +98,8 @@ public class AnalisesService
             k => ((int?)k.Id, null, k.Nome, k.Matricula)),
         "destino" => Agrupar(q, i => new { Id = i.Periodo.DestinoMunicipioId, i.Periodo.DestinoMunicipio!.Nome, Uf = i.Periodo.DestinoMunicipio!.Uf.Sigla },
             k => (k.Id, null, k.Nome, k.Uf)),
+        "cidadeOrigem" => Agrupar(q, i => new { Id = i.Periodo.Diaria.OrigemMunicipioId, i.Periodo.Diaria.OrigemMunicipio!.Nome, Uf = i.Periodo.Diaria.OrigemMunicipio!.Uf.Sigla },
+            k => (k.Id, null, k.Nome, k.Uf)),
         "regiao" => AgruparRegiao(q),
         "tipo" => Agrupar(q, i => new { Id = i.TipoDiariaId, i.TipoDiaria.Nome }, k => ((int?)k.Id, null, k.Nome, null)),
         "vinculo" => Agrupar(q, i => i.Periodo.Diaria.Vinculo, k => ((int?)(int)k, null, null, null)),
@@ -151,6 +153,7 @@ public class AnalisesService
         {
             "lotacao" => "Sem lotação",
             "destino" => "Sem município identificado",
+            "cidadeOrigem" => "Sem cidade de origem",
             "regiao" => "Sem região",
             "cargo" => "Sem cargo",
             _ => "Não informado"
@@ -203,31 +206,42 @@ public class AnalisesService
     }
 
     /// <summary>Evolução no tempo: mensal até 36 meses de intervalo, anual acima disso (ou sem intervalo).</summary>
-    public async Task<SerieDto2> SerieAsync(RelatorioFiltro f)
+    /// <summary>
+    /// Evolução no tempo pela data da diária (início do período) ou pela data do cadastro (lançamento, horário de PE).
+    /// Mensal até 36 meses de intervalo; anual acima disso ou sem intervalo.
+    /// </summary>
+    public async Task<SerieDto2> SerieAsync(RelatorioFiltro f, bool porCadastro = false)
     {
         var q = _relatorios.Base(f);
-        var anual = !(f.DataInicio.HasValue && f.DataFim.HasValue)
-                    || (f.DataFim.Value.Year - f.DataInicio.Value.Year) * 12 + f.DataFim.Value.Month - f.DataInicio.Value.Month >= 36;
+        var (ini, fim) = porCadastro ? (f.CadastroInicio, f.CadastroFim) : (f.DataInicio, f.DataFim);
+        var anual = !(ini.HasValue && fim.HasValue)
+                    || (fim.Value.Year - ini.Value.Year) * 12 + fim.Value.Month - ini.Value.Month >= 36;
         var nomesMes = new[] { "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez" };
+
+        // Data de referência: início do período ou cadastro convertido para o horário de Pernambuco (UTC-3).
+        var linhas = porCadastro
+            ? q.Select(i => new { Data = i.Periodo.Diaria.CriadoEm.AddHours(-3), i.ValorTotal, i.Periodo.DiariaId })
+                .Select(x => new { Ano = x.Data.Year, Mes = x.Data.Month, x.ValorTotal, x.DiariaId })
+            : q.Select(i => new { Ano = i.Periodo.DataInicio.Year, Mes = i.Periodo.DataInicio.Month, i.ValorTotal, i.Periodo.DiariaId });
 
         if (anual)
         {
-            var anos = await q.GroupBy(i => i.Periodo.DataInicio.Year)
-                .Select(g => new { Ano = g.Key, Valor = g.Sum(i => i.ValorTotal), Diarias = g.Select(i => i.Periodo.DiariaId).Distinct().Count() })
+            var anos = await linhas.GroupBy(x => x.Ano)
+                .Select(g => new { Ano = g.Key, Valor = g.Sum(x => x.ValorTotal), Diarias = g.Select(x => x.DiariaId).Distinct().Count() })
                 .OrderBy(x => x.Ano).ToListAsync();
-            // Anos implausíveis (erros de digitação do legado, ex.: 0026) ficam fora do gráfico; seguem nos relatórios.
+            // Anos implausíveis (erros de digitação do legado) ficam fora do gráfico; seguem nos relatórios.
             return new SerieDto2("ano", anos.Where(a => a.Ano >= 2010 && a.Ano <= DateTime.Today.Year + 1)
                 .Select(a => new PontoSerieDto(a.Ano.ToString(), a.Ano.ToString(), new DateOnly(a.Ano, 1, 1), new DateOnly(a.Ano, 12, 31), a.Valor, a.Diarias))
                 .ToList());
         }
 
-        var meses = await q.GroupBy(i => new { i.Periodo.DataInicio.Year, i.Periodo.DataInicio.Month })
-            .Select(g => new { g.Key.Year, g.Key.Month, Valor = g.Sum(i => i.ValorTotal), Diarias = g.Select(i => i.Periodo.DiariaId).Distinct().Count() })
+        var meses = await linhas.GroupBy(x => new { x.Ano, x.Mes })
+            .Select(g => new { g.Key.Ano, g.Key.Mes, Valor = g.Sum(x => x.ValorTotal), Diarias = g.Select(x => x.DiariaId).Distinct().Count() })
             .ToListAsync();
         var pontos = new List<PontoSerieDto>();
-        for (var d = new DateOnly(f.DataInicio!.Value.Year, f.DataInicio.Value.Month, 1); d <= f.DataFim!.Value; d = d.AddMonths(1))
+        for (var d = new DateOnly(ini!.Value.Year, ini.Value.Month, 1); d <= fim!.Value; d = d.AddMonths(1))
         {
-            var m = meses.FirstOrDefault(x => x.Year == d.Year && x.Month == d.Month);
+            var m = meses.FirstOrDefault(x => x.Ano == d.Year && x.Mes == d.Month);
             pontos.Add(new PontoSerieDto($"{d:yyyy-MM}", $"{nomesMes[d.Month - 1]}/{d:yy}", d, d.AddMonths(1).AddDays(-1), m?.Valor ?? 0, m?.Diarias ?? 0));
         }
         return new SerieDto2("mes", pontos);

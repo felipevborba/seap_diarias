@@ -59,6 +59,10 @@ public class Diaria : IAuditavel
     public Vinculo Vinculo { get; set; }
     public int? CargoId { get; set; }
     public int? UnidadeId { get; set; }
+    /// <summary>Cidade de onde parte a viagem (obrigatória em lançamentos novos).</summary>
+    public int? OrigemMunicipioId { get; set; }
+    /// <summary>Cidade de origem como digitada no legado (preservada mesmo quando o município foi identificado).</summary>
+    public string? OrigemTexto { get; set; }
     public string Objetivo { get; set; } = null!;
     public string? ProcessoSei { get; set; }
     public string? Observacao { get; set; }
@@ -80,6 +84,7 @@ public class Diaria : IAuditavel
     public Servidor Servidor { get; set; } = null!;
     public Cargo? Cargo { get; set; }
     public Unidade? Unidade { get; set; }
+    public Tabnaturalidade? OrigemMunicipio { get; set; }
     public List<DiariaPeriodo> Periodos { get; set; } = new();
 }
 

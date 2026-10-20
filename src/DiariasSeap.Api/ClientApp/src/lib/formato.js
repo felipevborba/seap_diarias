@@ -13,9 +13,15 @@ export function fmtData(iso) {
   return `${d}/${m}/${a}`;
 }
 
+// Data (dd/mm/aaaa) de um instante UTC vindo da API, no fuso de Pernambuco.
+export function fmtDataUtcLocal(iso) {
+  if (!iso) return '';
+  return new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'America/Recife' });
+}
+
 export function fmtDataHora(iso) {
   if (!iso) return '';
-  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(iso).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Recife' });
 }
 
 export function fmtCpf(v) {

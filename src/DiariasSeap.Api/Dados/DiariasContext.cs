@@ -56,6 +56,7 @@ public class DiariasContext : DbContext
             e.HasOne(x => x.Servidor).WithMany().HasForeignKey(x => x.ServidorId);
             e.HasOne(x => x.Cargo).WithMany().HasForeignKey(x => x.CargoId);
             e.HasOne(x => x.Unidade).WithMany().HasForeignKey(x => x.UnidadeId);
+            e.HasOne(x => x.OrigemMunicipio).WithMany().HasForeignKey(x => x.OrigemMunicipioId);
             e.HasMany(x => x.Periodos).WithOne(p => p.Diaria).HasForeignKey(p => p.DiariaId);
         });
 
