@@ -96,6 +96,17 @@ s,r=call("GET","/api/analises/ranking/cidadeOrigem?situacao=TODAS",tok=T); ok("a
 s,r=call("POST","/api/cadastros/tipos",{"nome":"teste","descricao":"testes","ativo":True},tok=T); tteste=r["data"]
 s,r=call("DELETE",f"/api/cadastros/tipos/{tteste}",tok=T); ok("exclui tipo sem uso", r["success"], r["message"])
 s,r=call("DELETE",f"/api/cadastros/tipos/{I}",tok=T); ok("nao exclui tipo em uso", not r["success"] and "usado" in r["message"], r["message"][:70])
+# passagem aerea: valor livre, sem tabela, nao conta como dia
+s,r=call("POST","/api/cadastros/tipos",{"nome":"Passagem Aérea","descricao":None,"ativo":True,"valorLivre":True},tok=T); PA=r["data"]; ok("cria tipo valor livre", r["success"], r.get("message"))
+reqPa={**req,"servidorId":contratado,"periodos":[per("2026-12-01","2026-12-03",car,[it(I),{"id":None,"tipoDiariaId":PA,"quantidade":None,"valorUnitario":1234.56}])]}
+s,r=call("POST","/api/diarias/simular",reqPa,tok=T)
+ok("passagem: 3x150 (contratado) + 1234,56 digitado", r["data"]["valorTotal"]==1684.56 and not r["data"]["erros"], f'{r["data"]["valorTotal"]} {r["data"]["erros"]}')
+s,r=call("POST","/api/diarias/simular",{**reqPa,"periodos":[per("2026-12-01","2026-12-03",car,[it(I),it(PA)])]},tok=T)
+ok("passagem sem valor bloqueada", any("informe o valor" in e for e in r["data"]["erros"]), str(r["data"]["erros"]))
+s,r=call("POST","/api/diarias",reqPa,tok=T); dpa=r["data"]; ok("lanca diaria com passagem", r["success"], r["message"])
+s,r=call("GET",f"/api/diarias/{dpa}",tok=T); ipa=next(i for i in r["data"]["periodos"][0]["itens"] if i["tipoDiariaId"]==PA)
+ok("passagem gravada com valor livre e qtd 1", ipa["valorLivre"] and ipa["quantidade"]==1 and ipa["valorUnitario"]==1234.56)
+s,r=call("GET",f"/api/relatorios?situacao=TODAS&servidor=Maria%20Contratada",tok=T); ok("passagem nao soma em quantidade de diarias", r["data"]["totais"]["quantidade"]==3 and r["data"]["totais"]["valorTotal"]==1684.56, str(r["data"]["totais"]))
 # lotacoes
 s,r=call("POST","/api/cadastros/lotacoes",{"sigla":"tst","nome":"Unidade de Teste"},tok=T); lid=r["data"]; ok("cria lotacao", r["success"])
 s,r=call("PUT",f"/api/cadastros/lotacoes/{lid}",{"sigla":"TST2","nome":"Unidade de Teste 2"},tok=T); ok("edita lotacao", r["success"])

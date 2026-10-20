@@ -122,7 +122,7 @@ public class RelatoriosService
         {
             Diarias = g.Select(i => i.Periodo.DiariaId).Distinct().Count(),
             Servidores = g.Select(i => i.Periodo.ServidorId).Distinct().Count(),
-            Quantidade = g.Sum(i => i.Quantidade),
+            Quantidade = g.Sum(i => i.TipoDiaria.ValorLivre ? 0 : i.Quantidade), // passagens não são "diárias"
             Valor = g.Sum(i => i.ValorTotal)
         }).FirstOrDefaultAsync();
         return t == null ? new RelatorioTotaisDto(0, 0, 0, 0) : new RelatorioTotaisDto(t.Diarias, t.Servidores, t.Quantidade, t.Valor);

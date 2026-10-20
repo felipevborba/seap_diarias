@@ -9,13 +9,13 @@ using Seap.Compartilhado.Seguranca;
 
 namespace DiariasSeap.Api.Servicos;
 
-public record ItemRequest(int? Id, int TipoDiariaId, decimal? Quantidade);
+public record ItemRequest(int? Id, int TipoDiariaId, decimal? Quantidade, decimal? ValorUnitario = null);
 public record PeriodoRequest(int? Id, DateOnly DataInicio, DateOnly DataFim, int? DestinoMunicipioId, List<ItemRequest> Itens);
 public record DiariaRequest(int ServidorId, string Objetivo, string? ProcessoSei, string? Observacao, List<PeriodoRequest> Periodos,
     int? OrigemMunicipioId = null);
 public record MotivoRequest(string Motivo);
 
-public record ItemCalculadoDto(int? Id, int TipoDiariaId, string TipoDiaria, decimal Quantidade, decimal ValorUnitario, decimal ValorTotal);
+public record ItemCalculadoDto(int? Id, int TipoDiariaId, string TipoDiaria, decimal Quantidade, decimal ValorUnitario, decimal ValorTotal, bool ValorLivre);
 public record PeriodoCalculadoDto(int? Id, DateOnly DataInicio, DateOnly DataFim, int Dias, int? DestinoMunicipioId, string Destino,
     string? DestinoTexto, bool IsentoSobreposicao, List<ItemCalculadoDto> Itens, decimal ValorTotal);
 public record ConflitoDto(int DiariaId, DateOnly DataInicio, DateOnly DataFim, string Destino);
@@ -126,7 +126,7 @@ public class DiariasService
                 p.DestinoMunicipio != null ? $"{p.DestinoMunicipio.Nome}/{p.DestinoMunicipio.Uf.Sigla}" : p.DestinoTexto ?? "—",
                 p.DestinoTexto, p.IsentoSobreposicao,
                 p.Itens.OrderBy(i => i.TipoDiariaId).Select(i => new ItemCalculadoDto(i.Id, i.TipoDiariaId, i.TipoDiaria.Nome,
-                    i.Quantidade, i.ValorUnitario, i.ValorTotal)).ToList(),
+                    i.Quantidade, i.ValorUnitario, i.ValorTotal, i.TipoDiaria.ValorLivre)).ToList(),
                 p.ValorTotal)).ToList(),
             d.OrigemMunicipioId, d.OrigemMunicipio != null ? $"{d.OrigemMunicipio.Nome}/{d.OrigemMunicipio.Uf.Sigla}" : d.OrigemTexto,
             d.OrigemTexto);
@@ -210,12 +210,23 @@ public class DiariasService
             foreach (var it in p.Itens)
             {
                 if (!tipos.TryGetValue(it.TipoDiariaId, out var tipo)) { erros.Add($"{rotulo}: selecione o tipo de diária."); continue; }
-                var quantidade = it.Quantidade ?? (p.Itens.Count == 1 ? dias : 0);
+                var itemAtual = it.Id.HasValue ? atual?.Itens.FirstOrDefault(x => x.Id == it.Id) : null;
+                if (tipo.ValorLivre)
+                {
+                    // Valor digitado (ex.: passagem aérea): não consulta a Tabela de Valores e não conta como dia.
+                    var valor = it.ValorUnitario ?? (itemAtual?.TipoDiariaId == tipo.Id ? itemAtual.ValorUnitario : null);
+                    if (valor is not > 0) erros.Add($"{rotulo}: informe o valor de {tipo.Nome}.");
+                    else if (decimal.Round(valor.Value, 2) != valor) erros.Add($"{rotulo}: o valor de {tipo.Nome} deve ter no máximo 2 casas decimais.");
+                    itensCalc.Add(new ItemCalculadoDto(it.Id, tipo.Id, tipo.Nome, 1, valor ?? 0, decimal.Round(valor ?? 0, 2), true));
+                    continue;
+                }
+
+                var diariasDoPeriodo = p.Itens.Count(x => tipos.TryGetValue(x.TipoDiariaId, out var t) && !t.ValorLivre);
+                var quantidade = it.Quantidade ?? (diariasDoPeriodo == 1 ? dias : 0);
                 if (quantidade <= 0 || quantidade % 0.5m != 0)
                     erros.Add($"{rotulo}: quantidade de {tipo.Nome} deve ser múltipla de 0,5 e maior que zero.");
 
                 // Item que não mudou (mesmo tipo, mesma data de início) mantém o valor gravado.
-                var itemAtual = it.Id.HasValue ? atual?.Itens.FirstOrDefault(x => x.Id == it.Id) : null;
                 decimal? unitario = itemAtual != null && itemAtual.TipoDiariaId == it.TipoDiariaId && atual!.DataInicio == p.DataInicio
                     ? itemAtual.ValorUnitario
                     : await _valores.ResolverAsync(tipo.Id, vinculo, cargoId, p.DataInicio);
@@ -223,10 +234,10 @@ public class DiariasService
                     erros.Add($"{rotulo}: não há valor cadastrado para diária {tipo.Nome}, vínculo {vinculo} e o cargo do servidor nesta data. Ajuste a Tabela de Valores.");
 
                 itensCalc.Add(new ItemCalculadoDto(it.Id, tipo.Id, tipo.Nome, quantidade, unitario ?? 0,
-                    decimal.Round((unitario ?? 0) * quantidade, 2)));
+                    decimal.Round((unitario ?? 0) * quantidade, 2), false));
             }
 
-            var soma = itensCalc.Sum(x => x.Quantidade);
+            var soma = itensCalc.Where(x => !x.ValorLivre).Sum(x => x.Quantidade);
             // Legado com datas inalteradas pode ter quantidades fora da regra atual; não bloqueia a edição de outros campos.
             if (soma > dias && !(existente?.Origem == Origens.Legado && mesmasDatas))
                 erros.Add($"{rotulo}: total de {soma:0.#} diárias excede os {dias} dias do período.");

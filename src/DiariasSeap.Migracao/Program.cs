@@ -51,12 +51,12 @@ else
     await using var c = new Npgsql.NpgsqlConnection(conexao);
     await c.OpenAsync();
     await using var cmd = new Npgsql.NpgsqlCommand(
-        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '003_cidade_origem_data_cadastro.sql'", c);
+        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '004_tipo_valor_livre.sql'", c);
     long aplicado;
     try { aplicado = (long)(await cmd.ExecuteScalarAsync())!; } catch { aplicado = 0; }
     if (aplicado == 0)
     {
-        Log("ERRO — o banco ainda não tem o schema desta versão (003_cidade_origem_data_cadastro.sql). " +
+        Log("ERRO — o banco ainda não tem o schema desta versão (004_tipo_valor_livre.sql). " +
             "Faça o deploy da API v2 antes de migrar (ou use --aplicar-schema em banco local).");
         return 3;
     }

@@ -10,6 +10,8 @@ public class TipoDiaria : IAuditavel
     public string Nome { get; set; } = null!;
     public string? Descricao { get; set; }
     public bool Ativo { get; set; } = true;
+    /// <summary>Valor digitado no lançamento (ex.: passagem aérea), sem Tabela de Valores; quantidade sempre 1.</summary>
+    public bool ValorLivre { get; set; }
 }
 
 /// <summary>

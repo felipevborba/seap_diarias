@@ -8,7 +8,7 @@ import { diasEntre, fmtData, fmtMoeda, fmtNumero } from '../lib/formato';
 import { useTipos } from '../lib/useDados';
 
 let chaveSeq = 0;
-const novoItem = (tipoDiariaId = '') => ({ chave: ++chaveSeq, id: null, tipoDiariaId, quantidade: '' });
+const novoItem = (tipoDiariaId = '') => ({ chave: ++chaveSeq, id: null, tipoDiariaId, quantidade: '', valor: '' });
 const novoPeriodo = (base, tipoPadrao) => ({
   chave: ++chaveSeq,
   id: null,
@@ -25,6 +25,8 @@ function separarDestino(texto, id) {
 }
 
 const numero = (v) => (v === '' || v == null ? null : Number(String(v).replace(',', '.')));
+// Itens de diária propriamente ditos (sem os de valor livre, como passagem aérea), para a quantidade padrão = dias.
+const qtdDiarias = (itens, tipos) => itens.filter((i) => !tipos.find((t) => String(t.id) === String(i.tipoDiariaId))?.valorLivre).length;
 
 export default function DiariaForm() {
   const { id } = useParams();
@@ -73,7 +75,8 @@ export default function DiariaForm() {
           chave: ++chaveSeq,
           id: i.id,
           tipoDiariaId: i.tipoDiariaId,
-          quantidade: p.itens.length === 1 && Number(i.quantidade) === p.dias ? '' : String(i.quantidade).replace('.', ','),
+          quantidade: i.valorLivre || (p.itens.filter((x) => !x.valorLivre).length === 1 && Number(i.quantidade) === p.dias) ? '' : String(i.quantidade).replace('.', ','),
+          valor: i.valorLivre ? String(i.valorUnitario.toFixed(2)).replace('.', ',') : '',
         })),
       })));
       setCarregando(false);
@@ -86,6 +89,7 @@ export default function DiariaForm() {
     setPeriodos((ps) => ps.map((p) => ({ ...p, itens: p.itens.map((i) => (i.tipoDiariaId ? i : { ...i, tipoDiariaId: tipos[0].id })) })));
   }, [tipos, editando]);
 
+  const livre = (tipoId) => !!tipos.find((t) => String(t.id) === String(tipoId))?.valorLivre;
   const completo = (p) => p.dataInicio && p.dataFim && (p.destino || p.destinoTexto) && p.itens.length && p.itens.every((i) => i.tipoDiariaId);
 
   const requisicao = useMemo(() => ({
@@ -99,9 +103,11 @@ export default function DiariaForm() {
       dataInicio: p.dataInicio,
       dataFim: p.dataFim,
       destinoMunicipioId: p.destino?.id ?? null,
-      itens: p.itens.map((i) => ({ id: i.id, tipoDiariaId: Number(i.tipoDiariaId), quantidade: numero(i.quantidade) })),
+      itens: p.itens.map((i) => (livre(i.tipoDiariaId)
+        ? { id: i.id, tipoDiariaId: Number(i.tipoDiariaId), quantidade: null, valorUnitario: numero(i.valor) }
+        : { id: i.id, tipoDiariaId: Number(i.tipoDiariaId), quantidade: numero(i.quantidade) })),
     })),
-  }), [servidor, origem, objetivo, processoSei, observacao, periodos]);
+  }), [servidor, origem, objetivo, processoSei, observacao, periodos, tipos]);
 
   // Pré-visualização: valores e conflitos calculados no servidor (mesma regra da gravação).
   useEffect(() => {
@@ -163,7 +169,7 @@ export default function DiariaForm() {
     <form onSubmit={salvar}>
       <CabecalhoPagina
         titulo={editando ? `Editar diária nº ${id}` : 'Lançar diária'}
-        subtitulo="Cada período tem destino e um ou mais tipos de diária (ex.: 2 integrais + 1 parcial). O valor vem da Tabela de Valores."
+        subtitulo="Cada período tem destino e um ou mais tipos de diária (ex.: 2 integrais + 1 parcial). O valor vem da Tabela de Valores; passagens têm o valor informado no lançamento."
         acoes={<Link to={editando ? `/diarias/${id}` : '/diarias'} className="btn-secundario"><Icone nome="arrow_back" /> Voltar</Link>}
       />
 
@@ -259,6 +265,7 @@ export default function DiariaForm() {
                       <div className="flex flex-col gap-2">
                         {p.itens.map((it) => {
                           const itCalc = calc?.itens.find((c) => String(c.tipoDiariaId) === String(it.tipoDiariaId));
+                          const valorLivre = livre(it.tipoDiariaId);
                           return (
                             <div key={it.chave} className="grid grid-cols-12 gap-2 items-center">
                               <select className="campo col-span-5" aria-label="Tipo de diária" required value={it.tipoDiariaId}
@@ -266,11 +273,19 @@ export default function DiariaForm() {
                                 <option value="">Tipo</option>
                                 {tipos.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
                               </select>
-                              <input className="campo col-span-3 tabular" inputMode="decimal" aria-label="Quantidade"
-                                placeholder={p.itens.length === 1 && dias ? `${dias} (dias)` : 'Qtd.'}
-                                value={it.quantidade} onChange={(e) => alterarItem(p.chave, it.chave, 'quantidade', e.target.value.replace(/[^\d.,]/g, ''))} />
+                              {valorLivre ? (
+                                <div className="col-span-3 relative">
+                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant font-body-md text-body-md pointer-events-none">R$</span>
+                                  <input className="campo !pl-9 tabular" inputMode="decimal" aria-label="Valor da passagem" required placeholder="0,00"
+                                    value={it.valor} onChange={(e) => alterarItem(p.chave, it.chave, 'valor', e.target.value.replace(/[^\d,]/g, ''))} />
+                                </div>
+                              ) : (
+                                <input className="campo col-span-3 tabular" inputMode="decimal" aria-label="Quantidade"
+                                  placeholder={qtdDiarias(p.itens, tipos) === 1 && dias ? `${dias} (dias)` : 'Qtd.'}
+                                  value={it.quantidade} onChange={(e) => alterarItem(p.chave, it.chave, 'quantidade', e.target.value.replace(/[^\d.,]/g, ''))} />
+                              )}
                               <span className="col-span-3 text-right font-body-md text-body-md text-on-surface-variant tabular whitespace-nowrap">
-                                {itCalc ? `${fmtNumero(itCalc.quantidade)} × ${fmtMoeda(itCalc.valorUnitario)}` : ''}
+                                {!itCalc ? '' : valorLivre ? 'valor informado' : `${fmtNumero(itCalc.quantidade)} × ${fmtMoeda(itCalc.valorUnitario)}`}
                               </span>
                               <div className="col-span-1 text-right">
                                 {p.itens.length > 1 && (

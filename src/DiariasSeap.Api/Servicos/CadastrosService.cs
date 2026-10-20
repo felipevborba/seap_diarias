@@ -10,8 +10,8 @@ public record CargoDto(int Id, string Nome, bool Ativo);
 public record CargoRequest(string Nome, bool Ativo);
 public record RegiaoDto(int Id, string Nome, List<MunicipioDto> Municipios);
 public record RegiaoRequest(string Nome, List<int> MunicipioIds);
-public record TipoDiariaDto(int Id, string Nome, string? Descricao, bool Ativo);
-public record TipoDiariaRequest(string Nome, string? Descricao, bool Ativo);
+public record TipoDiariaDto(int Id, string Nome, string? Descricao, bool Ativo, bool ValorLivre);
+public record TipoDiariaRequest(string Nome, string? Descricao, bool Ativo, bool ValorLivre = false);
 public record ValorDiariaDto(int Id, int TipoDiariaId, string TipoDiaria, Vinculo? Vinculo, int? CargoId, string? Cargo,
     decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim);
 public record LotacaoDto(int Id, string? Sigla, string Nome, int Policiais, int Servidores, int Diarias);
@@ -88,7 +88,7 @@ public class CadastrosService
     // ---------- Tipos de diária ----------
     public Task<List<TipoDiariaDto>> TiposAsync(bool somenteAtivos) =>
         _db.TiposDiaria.AsNoTracking().Where(t => !somenteAtivos || t.Ativo).OrderBy(t => t.Id)
-            .Select(t => new TipoDiariaDto(t.Id, t.Nome, t.Descricao, t.Ativo)).ToListAsync();
+            .Select(t => new TipoDiariaDto(t.Id, t.Nome, t.Descricao, t.Ativo, t.ValorLivre)).ToListAsync();
 
     public async Task<int> SalvarTipoAsync(int? id, TipoDiariaRequest req)
     {
@@ -101,6 +101,7 @@ public class CadastrosService
         tipo.Nome = nome;
         tipo.Descricao = string.IsNullOrWhiteSpace(req.Descricao) ? null : req.Descricao.Trim();
         tipo.Ativo = req.Ativo;
+        tipo.ValorLivre = req.ValorLivre;
         await _db.SaveChangesAsync();
         return tipo.Id;
     }

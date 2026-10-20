@@ -106,13 +106,13 @@ export default function TabelaValores() {
         <section className="cartao overflow-hidden self-start">
           <div className="flex items-center justify-between p-4 border-b border-outline-variant/60">
             <h3 className="font-headline-sm text-headline-sm text-primary">Tipos de diária</h3>
-            {admin && <button type="button" className="btn-icone" aria-label="Novo tipo" onClick={() => { setErroForm(''); setTipoForm({ nome: '', descricao: '', ativo: true }); }}><Icone nome="add" /></button>}
+            {admin && <button type="button" className="btn-icone" aria-label="Novo tipo" onClick={() => { setErroForm(''); setTipoForm({ nome: '', descricao: '', ativo: true, valorLivre: false }); }}><Icone nome="add" /></button>}
           </div>
           <ul>
             {(tipos.dados || []).map((t) => (
               <li key={t.id} className="flex items-center justify-between gap-3 px-4 py-3 border-b border-outline-variant/50 last:border-0">
                 <div>
-                  <p className="font-body-md text-body-md font-semibold">{t.nome} {!t.ativo && <Selo>Inativo</Selo>}</p>
+                  <p className="font-body-md text-body-md font-semibold">{t.nome} {!t.ativo && <Selo>Inativo</Selo>} {t.valorLivre && <Selo cor="azul">Valor livre</Selo>}</p>
                   {t.descricao && <p className="font-label-md text-label-md text-on-surface-variant">{t.descricao}</p>}
                 </div>
                 {admin && (
@@ -173,6 +173,10 @@ export default function TabelaValores() {
             <label className="flex items-center gap-2">
               <input type="checkbox" className="rounded border-outline text-primary focus:ring-primary" checked={tipoForm.ativo} onChange={(e) => setTipoForm({ ...tipoForm, ativo: e.target.checked })} />
               <span className="font-body-md text-body-md">Ativo (disponível no lançamento)</span>
+            </label>
+            <label className="flex items-start gap-2">
+              <input type="checkbox" className="mt-1 rounded border-outline text-primary focus:ring-primary" checked={!!tipoForm.valorLivre} onChange={(e) => setTipoForm({ ...tipoForm, valorLivre: e.target.checked })} />
+              <span className="font-body-md text-body-md">Valor livre: o valor é digitado no lançamento (ex.: passagem aérea) e não usa a Tabela de Valores</span>
             </label>
           </form>
         )}
