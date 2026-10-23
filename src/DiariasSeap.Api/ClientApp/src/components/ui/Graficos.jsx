@@ -121,11 +121,20 @@ export function ColunasMensais({ titulo, subtitulo, dados }) {
   );
 }
 
-export function Indicador({ rotulo, valor, detalhe, destaque = false }) {
+/**
+ * Cartão de indicador. O valor nunca quebra (nem no meio do número): a fonte acompanha a largura do cartão
+ * (container query) e o tamanho do texto — "R$ 6.587.093,34" encolhe num cartão estreito, "236" fica grande.
+ */
+export function Indicador({ rotulo, valor, detalhe, destaque = false, className = '' }) {
+  const caracteres = Math.max(String(valor).length, 6);
+  const maximo = destaque ? 32 : 28;
   return (
-    <div className="cartao p-padding-card">
+    <div className={`cartao p-padding-card min-w-0 ${className}`}>
       <p className="font-label-md text-label-md text-on-surface-variant">{rotulo}</p>
-      <p className={`mt-1 font-semibold break-words ${destaque ? 'text-[24px] leading-8 2xl:text-[32px] 2xl:leading-10 text-primary whitespace-nowrap tabular' : 'text-[28px] leading-9 text-on-surface'}`}>{valor}</p>
+      <div className="[container-type:inline-size]">
+        <p className={`mt-1 font-semibold whitespace-nowrap tabular leading-tight ${destaque ? 'text-primary' : 'text-on-surface'}`}
+          style={{ fontSize: `clamp(14px, calc(100cqi / ${(caracteres * 0.66).toFixed(2)}), ${maximo}px)` }}>{valor}</p>
+      </div>
       {detalhe && <p className="font-label-md text-label-md text-on-surface-variant mt-1">{detalhe}</p>}
     </div>
   );

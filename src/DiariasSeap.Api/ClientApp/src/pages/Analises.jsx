@@ -189,10 +189,8 @@ export default function Analises() {
       <Alerta className="mb-4">{erro}</Alerta>
 
       {/* Indicadores */}
-      <div className="grid grid-cols-2 xl:grid-cols-5 gap-gutter-grid mb-gutter-grid">
-        <div className="col-span-2 xl:col-span-1">
-          <Indicador destaque rotulo="Valor em diárias" valor={visao ? fmtMoeda(visao.totais.valorTotal) : '…'} />
-        </div>
+      <div className="grid grid-cols-2 xl:grid-cols-6 gap-gutter-grid mb-gutter-grid">
+        <Indicador destaque className="col-span-2" rotulo="Valor em diárias" valor={visao ? fmtMoeda(visao.totais.valorTotal) : '…'} />
         <Indicador rotulo="Lançamentos" valor={visao ? fmtNumero(visao.totais.diarias) : '…'} detalhe={visao ? `${fmtNumero(visao.totais.quantidade)} diárias pagas` : undefined} />
         <Indicador rotulo="Servidores" valor={visao ? fmtNumero(visao.totais.servidores) : '…'} detalhe={visao ? `${fmtMoeda(visao.valorMedioPorServidor)} por servidor` : undefined} />
         <Indicador rotulo="Valor médio por diária" valor={visao ? fmtMoeda(visao.valorMedioPorDiaria) : '…'} />

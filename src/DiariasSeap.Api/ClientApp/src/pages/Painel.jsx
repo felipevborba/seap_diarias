@@ -42,13 +42,14 @@ export default function Painel() {
       <Alerta className="mb-4">{erro}</Alerta>
       {!d ? <Carregando /> : (
         <div className="flex flex-col gap-gutter-grid">
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-gutter-grid">
-            <Indicador destaque rotulo="Gasto com diárias no período" valor={fmtMoeda(d.totais.valorTotal)} />
-            <Indicador rotulo="Passagens aéreas" valor={fmtMoeda(d.valorPassagens)}
+          {/* Valores em R$ em cartões largos (primeira linha); contagens embaixo. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-gutter-grid">
+            <Indicador destaque className="xl:col-span-3" rotulo="Gasto com diárias no período" valor={fmtMoeda(d.totais.valorTotal)} />
+            <Indicador className="xl:col-span-3" rotulo="Passagens aéreas" valor={fmtMoeda(d.valorPassagens)}
               detalhe={d.passagens ? `${fmtNumero(d.passagens)} passage${d.passagens > 1 ? 'ns' : 'm'} · total geral ${fmtMoeda(d.totais.valorTotal + d.valorPassagens)}` : 'Nenhuma no período'} />
-            <Indicador rotulo="Lançamentos" valor={fmtNumero(d.totais.diarias)} />
-            <Indicador rotulo="Servidores atendidos" valor={fmtNumero(d.totais.servidores)} />
-            <Indicador rotulo="Quantidade de diárias" valor={fmtNumero(d.totais.quantidade)}
+            <Indicador className="xl:col-span-2" rotulo="Lançamentos" valor={fmtNumero(d.totais.diarias)} />
+            <Indicador className="xl:col-span-2" rotulo="Servidores atendidos" valor={fmtNumero(d.totais.servidores)} />
+            <Indicador className="xl:col-span-2" rotulo="Quantidade de diárias" valor={fmtNumero(d.totais.quantidade)}
               detalhe={d.totais.quantidade > 0 ? `Média de ${fmtMoeda(d.totais.valorTotal / d.totais.quantidade)} por diária` : undefined} />
           </div>
           <section className="cartao p-padding-card">
