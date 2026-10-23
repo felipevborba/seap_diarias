@@ -138,7 +138,8 @@ export default function Servidores() {
             <Alerta className="sm:col-span-2">{erroForm}</Alerta>
             {policial && (
               <Alerta tipo="info" className="sm:col-span-2">
-                Nome, CPF, matrícula e lotação vêm do cadastro de policiais da Carteira e são atualizados pela sincronização.
+                Nome e CPF vêm do cadastro de policiais da Carteira. Matrícula e lotação podem ser corrigidas aqui; a lotação alterada
+                nas Diárias deixa de ser atualizada pela sincronização.
               </Alerta>
             )}
             <fieldset disabled={!podeEditar} className="contents">
@@ -148,8 +149,11 @@ export default function Servidores() {
               <Campo rotulo="CPF *">
                 <input className="campo" required disabled={policial} inputMode="numeric" value={form.cpf} onChange={(e) => setForm({ ...form, cpf: mascaraCpf(e.target.value) })} />
               </Campo>
-              <Campo rotulo="Matrícula">
-                <input className="campo" disabled={policial} value={form.matricula || ''} onChange={set('matricula')} />
+              <Campo rotulo="Matrícula" dica={form.matriculaAntiga && form.matriculaAntiga !== form.matricula ? `Matrícula antiga: ${form.matriculaAntiga}` : 'Formato novo: 1234567/01'}>
+                <input className="campo" value={form.matricula || ''} onChange={set('matricula')} placeholder="1234567/01" />
+              </Campo>
+              <Campo rotulo="Órgão" className="sm:col-span-2">
+                <input className="campo" disabled value="SEAP - Secretaria de Administração Penitenciária" />
               </Campo>
               <Campo rotulo="Vínculo *" dica="Define, com o cargo, o valor da diária">
                 <select className="campo" value={form.vinculo} onChange={set('vinculo')}>
@@ -161,8 +165,8 @@ export default function Servidores() {
                   <option value="">Não informado</option>{cargos.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
                 </select>
               </Campo>
-              <Campo rotulo="Lotação" className="sm:col-span-2">
-                <select className="campo" disabled={policial} value={form.unidadeId} onChange={set('unidadeId')}>
+              <Campo rotulo="Lotação" className="sm:col-span-2" dica={policial && form.lotacaoManual ? 'Definida nas Diárias (a sincronização não altera)' : undefined}>
+                <select className="campo" value={form.unidadeId} onChange={set('unidadeId')}>
                   <option value="">Não informada</option>{unidades.map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
                 </select>
               </Campo>

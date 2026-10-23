@@ -32,6 +32,7 @@ public class DiariasContext : DbContext
     public DbSet<Diaria> Diarias => Set<Diaria>();
     public DbSet<DiariaPeriodo> DiariasPeriodos => Set<DiariaPeriodo>();
     public DbSet<DiariaItem> DiariasItens => Set<DiariaItem>();
+    public DbSet<DiariaPassagem> DiariasPassagens => Set<DiariaPassagem>();
 
     protected override void OnModelCreating(ModelBuilder mb)
     {
@@ -53,10 +54,10 @@ public class DiariasContext : DbContext
             e.ToTable("diaria", Schema);
             e.Property(x => x.Vinculo).HasConversion<short>();
             e.Property(x => x.ValorTotal).HasPrecision(12, 2);
+            e.Property(x => x.ValorPassagens).HasPrecision(12, 2);
             e.HasOne(x => x.Servidor).WithMany().HasForeignKey(x => x.ServidorId);
             e.HasOne(x => x.Cargo).WithMany().HasForeignKey(x => x.CargoId);
             e.HasOne(x => x.Unidade).WithMany().HasForeignKey(x => x.UnidadeId);
-            e.HasOne(x => x.OrigemMunicipio).WithMany().HasForeignKey(x => x.OrigemMunicipioId);
             e.HasMany(x => x.Periodos).WithOne(p => p.Diaria).HasForeignKey(p => p.DiariaId);
         });
 
@@ -64,8 +65,18 @@ public class DiariasContext : DbContext
         {
             e.ToTable("diaria_periodo", Schema);
             e.Property(x => x.ValorTotal).HasPrecision(12, 2);
+            e.HasOne(x => x.OrigemMunicipio).WithMany().HasForeignKey(x => x.OrigemMunicipioId);
             e.HasOne(x => x.DestinoMunicipio).WithMany().HasForeignKey(x => x.DestinoMunicipioId);
             e.HasMany(x => x.Itens).WithOne(i => i.Periodo).HasForeignKey(i => i.PeriodoId);
+            e.HasOne(x => x.Passagem).WithOne(x => x.Periodo).HasForeignKey<DiariaPassagem>(x => x.PeriodoId);
+        });
+
+        mb.Entity<DiariaPassagem>(e =>
+        {
+            e.ToTable("diaria_passagem", Schema);
+            e.Property(x => x.ValorIda).HasPrecision(12, 2);
+            e.Property(x => x.ValorVolta).HasPrecision(12, 2);
+            e.Property(x => x.ValorTotal).HasPrecision(12, 2);
         });
 
         mb.Entity<DiariaItem>(e =>

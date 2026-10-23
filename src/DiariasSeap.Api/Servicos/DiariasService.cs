@@ -9,17 +9,22 @@ using Seap.Compartilhado.Seguranca;
 
 namespace DiariasSeap.Api.Servicos;
 
-public record ItemRequest(int? Id, int TipoDiariaId, decimal? Quantidade, decimal? ValorUnitario = null);
-public record PeriodoRequest(int? Id, DateOnly DataInicio, DateOnly DataFim, int? DestinoMunicipioId, List<ItemRequest> Itens);
-public record DiariaRequest(int ServidorId, string Objetivo, string? ProcessoSei, string? Observacao, List<PeriodoRequest> Periodos,
-    int? OrigemMunicipioId = null);
-public record MotivoRequest(string Motivo);
+public record ItemRequest(int? Id, int TipoDiariaId, decimal? Quantidade);
+public record PassagemRequest(string? Agencia, string? Categoria, DateOnly? DataIda, DateOnly? DataVolta, decimal? ValorIda, decimal? ValorVolta);
+public record PeriodoRequest(int? Id, DateOnly DataInicio, DateOnly DataFim, int? DestinoMunicipioId, List<ItemRequest> Itens,
+    int? OrigemMunicipioId = null, PassagemRequest? Passagem = null);
+public record DiariaRequest(int ServidorId, string Objetivo, string? ProcessoSei, string? Observacao, List<PeriodoRequest> Periodos);
 
-public record ItemCalculadoDto(int? Id, int TipoDiariaId, string TipoDiaria, decimal Quantidade, decimal ValorUnitario, decimal ValorTotal, bool ValorLivre);
-public record PeriodoCalculadoDto(int? Id, DateOnly DataInicio, DateOnly DataFim, int Dias, int? DestinoMunicipioId, string Destino,
-    string? DestinoTexto, bool IsentoSobreposicao, List<ItemCalculadoDto> Itens, decimal ValorTotal);
+public record ItemCalculadoDto(int? Id, int TipoDiariaId, string TipoDiaria, decimal Quantidade, decimal ValorUnitario, decimal ValorTotal);
+public record PassagemDto(string? Agencia, string? Categoria, DateOnly? DataIda, DateOnly? DataVolta, decimal ValorIda, decimal ValorVolta,
+    decimal ValorTotal);
+/// <summary>ValorTotal = só as diárias do período; a passagem vem à parte.</summary>
+public record PeriodoCalculadoDto(int? Id, DateOnly DataInicio, DateOnly DataFim, int Dias, int? OrigemMunicipioId, string Origem,
+    string? OrigemTexto, int? DestinoMunicipioId, string Destino, string? DestinoTexto, bool IsentoSobreposicao,
+    List<ItemCalculadoDto> Itens, decimal ValorTotal, PassagemDto? Passagem);
 public record ConflitoDto(int DiariaId, DateOnly DataInicio, DateOnly DataFim, string Destino);
-public record SimulacaoDto(List<PeriodoCalculadoDto> Periodos, decimal ValorTotal, List<string> Erros, List<ConflitoDto> Conflitos);
+public record SimulacaoDto(List<PeriodoCalculadoDto> Periodos, decimal ValorDiarias, decimal ValorPassagens, decimal ValorTotal,
+    List<string> Erros, List<ConflitoDto> Conflitos);
 
 public record DiariaFiltro(string? Busca, int? UnidadeId, DateOnly? DataInicio, DateOnly? DataFim, string? Situacao,
     string? Origem, int Page = 1, int PageSize = 20);
@@ -30,19 +35,21 @@ public record DiariaDto(int Id, int ServidorId, string Servidor, string? Cpf, st
     string? Unidade, string Objetivo, string? ProcessoSei, string? Observacao, string Situacao, string? MotivoCancelamento,
     string? MotivoRejeicao, string? DecididoPorNome, DateTime? DecididoEm, decimal ValorTotal, string Origem, int? LegadoCodigo,
     string? CriadoPorNome, DateTime CriadoEm, DateTime AtualizadoEm, List<PeriodoCalculadoDto> Periodos,
-    int? CidadeOrigemId, string? CidadeOrigem, string? CidadeOrigemTexto);
+    decimal ValorDiarias, decimal ValorPassagens);
 public record HistoricoDto(long Id, string Entidade, string EntidadeId, string Acao, string? UsuarioNome, DateTime DataHora,
     JsonElement Alteracoes);
 
 /// <summary>
-/// Lançamento e aprovação de diárias. Regras:
-///  * um lançamento tem 1..N períodos intercalados; cada período tem destino e itens (tipo × quantidade);
+/// Lançamento de diárias. Regras:
+///  * um lançamento tem 1..N períodos intercalados; cada período tem origem, destino, itens (tipo × quantidade)
+///    e, opcionalmente, uma passagem aérea (período só com passagem é permitido);
 ///  * o valor unitário vem da tabela de valores (tipo × vínculo × cargo, vigente no início do período);
 ///    na edição, item que não mudou de tipo nem de data de início mantém o valor gravado (preserva o legado);
 ///  * soma das quantidades do período ≤ nº de dias, em múltiplos de 0,5;
 ///  * um servidor não pode ter duas diárias vigentes (PENDENTE/APROVADA) na mesma data — validado aqui com
 ///    lock por servidor e garantido no banco pela constraint diaria_periodo_sem_sobreposicao;
-///  * fluxo: lançada PENDENTE -&gt; ADMIN aprova ou rejeita; editar devolve para PENDENTE; exclusão = cancelamento.
+///  * sem etapa de aprovação (ajustes SEAP de 20/10/2026): lançar = aprovar; a exclusão apaga o lançamento
+///    (a auditoria guarda todos os campos excluídos).
 /// </summary>
 public class DiariasService
 {
@@ -72,6 +79,7 @@ public class DiariasService
             q = q.Where(d => d.Id == numero || d.LegadoCodigo == numero
                              || EF.Functions.ILike(EF.Functions.Unaccent(d.Servidor.Nome), EF.Functions.Unaccent(termo))
                              || EF.Functions.ILike(d.Servidor.Matricula ?? "", termo)
+                             || EF.Functions.ILike(d.Servidor.MatriculaAntiga ?? "", termo)
                              || EF.Functions.ILike(d.ProcessoSei ?? "", termo)
                              || (digitos.Length >= 3 && (d.Servidor.Cpf ?? "").Contains(digitos)));
         }
@@ -111,9 +119,10 @@ public class DiariasService
     {
         var d = await _db.Diarias.AsNoTracking()
             .Include(x => x.Servidor).Include(x => x.Cargo).Include(x => x.Unidade)
-            .Include(x => x.OrigemMunicipio).ThenInclude(m => m!.Uf)
             .Include(x => x.Periodos).ThenInclude(p => p.Itens).ThenInclude(i => i.TipoDiaria)
             .Include(x => x.Periodos).ThenInclude(p => p.DestinoMunicipio).ThenInclude(m => m!.Uf)
+            .Include(x => x.Periodos).ThenInclude(p => p.OrigemMunicipio).ThenInclude(m => m!.Uf)
+            .Include(x => x.Periodos).ThenInclude(p => p.Passagem)
             .AsSplitQuery()
             .FirstOrDefaultAsync(x => x.Id == id)
             ?? throw new NaoEncontradoException("Diária não encontrada.");
@@ -122,15 +131,19 @@ public class DiariasService
             d.Unidade?.Nome, d.Objetivo, d.ProcessoSei, d.Observacao, d.Situacao, d.MotivoCancelamento, d.MotivoRejeicao,
             d.DecididoPorNome, d.DecididoEm, d.ValorTotal, d.Origem, d.LegadoCodigo, d.CriadoPorNome, d.CriadoEm, d.AtualizadoEm,
             d.Periodos.OrderBy(p => p.DataInicio).Select(p => new PeriodoCalculadoDto(p.Id, p.DataInicio, p.DataFim,
-                Dias(p.DataInicio, p.DataFim), p.DestinoMunicipioId,
+                Dias(p.DataInicio, p.DataFim),
+                p.OrigemMunicipioId, p.OrigemMunicipio != null ? $"{p.OrigemMunicipio.Nome}/{p.OrigemMunicipio.Uf.Sigla}" : p.OrigemTexto ?? "—",
+                p.OrigemTexto, p.DestinoMunicipioId,
                 p.DestinoMunicipio != null ? $"{p.DestinoMunicipio.Nome}/{p.DestinoMunicipio.Uf.Sigla}" : p.DestinoTexto ?? "—",
                 p.DestinoTexto, p.IsentoSobreposicao,
                 p.Itens.OrderBy(i => i.TipoDiariaId).Select(i => new ItemCalculadoDto(i.Id, i.TipoDiariaId, i.TipoDiaria.Nome,
-                    i.Quantidade, i.ValorUnitario, i.ValorTotal, i.TipoDiaria.ValorLivre)).ToList(),
-                p.ValorTotal)).ToList(),
-            d.OrigemMunicipioId, d.OrigemMunicipio != null ? $"{d.OrigemMunicipio.Nome}/{d.OrigemMunicipio.Uf.Sigla}" : d.OrigemTexto,
-            d.OrigemTexto);
+                    i.Quantidade, i.ValorUnitario, i.ValorTotal)).ToList(),
+                p.ValorTotal, p.Passagem == null ? null : PassagemDe(p.Passagem))).ToList(),
+            d.ValorTotal - d.ValorPassagens, d.ValorPassagens);
     }
+
+    private static PassagemDto PassagemDe(DiariaPassagem x) =>
+        new(x.Agencia, x.Categoria, x.DataIda, x.DataVolta, x.ValorIda, x.ValorVolta, x.ValorTotal);
 
     public async Task<List<HistoricoDto>> HistoricoAsync(int id)
     {
@@ -150,16 +163,21 @@ public class DiariasService
     {
         var servidor = await _db.Servidores.AsNoTracking().FirstOrDefaultAsync(s => s.Id == req.ServidorId);
         if (servidor == null)
-            return new SimulacaoDto(new(), 0, new() { "Selecione o servidor." }, new());
+            return new SimulacaoDto(new(), 0, 0, 0, new() { "Selecione o servidor." }, new());
 
         var existente = diariaId.HasValue
-            ? await _db.Diarias.AsNoTracking().Include(d => d.Periodos).ThenInclude(p => p.Itens).FirstOrDefaultAsync(d => d.Id == diariaId)
+            ? await _db.Diarias.AsNoTracking().Include(d => d.Periodos).ThenInclude(p => p.Itens).AsSplitQuery()
+                .FirstOrDefaultAsync(d => d.Id == diariaId)
             : null;
         var (vinculo, cargoId) = Snapshot(servidor, existente);
         var (periodos, erros) = await CalcularAsync(req.Periodos, vinculo, cargoId, existente);
         var conflitos = await ConflitosAsync(servidor.Id, periodos, diariaId);
-        return new SimulacaoDto(periodos, periodos.Sum(p => p.ValorTotal), erros, conflitos);
+        var (diarias, passagens) = Totais(periodos);
+        return new SimulacaoDto(periodos, diarias, passagens, diarias + passagens, erros, conflitos);
     }
+
+    private static (decimal Diarias, decimal Passagens) Totais(List<PeriodoCalculadoDto> periodos) =>
+        (periodos.Sum(p => p.ValorTotal), periodos.Sum(p => p.Passagem?.ValorTotal ?? 0));
 
     /// <summary>Na edição mantém vínculo/cargo fotografados, a menos que o servidor tenha sido trocado.</summary>
     private static (Vinculo, int?) Snapshot(Servidor servidor, Diaria? existente) =>
@@ -175,7 +193,8 @@ public class DiariasService
         if (periodos.Count == 0) erros.Add("Informe ao menos um período.");
 
         var tipos = await _db.TiposDiaria.AsNoTracking().ToDictionaryAsync(t => t.Id);
-        var destinoIds = periodos.Where(p => p.DestinoMunicipioId.HasValue).Select(p => p.DestinoMunicipioId!.Value).Distinct().ToList();
+        var destinoIds = periodos.SelectMany(p => new[] { p.DestinoMunicipioId, p.OrigemMunicipioId })
+            .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
         var destinos = await _db.Municipios.AsNoTracking().Where(m => destinoIds.Contains(m.Id))
             .Select(m => new { m.Id, Nome = m.Nome + "/" + m.Uf.Sigla })
             .ToDictionaryAsync(m => m.Id, m => m.Nome);
@@ -201,28 +220,34 @@ public class DiariasService
             else if (atual?.DestinoTexto != null && atual.DestinoMunicipioId == null) destino = atual.DestinoTexto;
             else { erros.Add($"{rotulo}: selecione o município de destino."); continue; }
 
+            // Origem: mesma regra do destino (período legado pode ter só o texto original).
+            string origem;
+            if (p.OrigemMunicipioId.HasValue)
+            {
+                if (!destinos.TryGetValue(p.OrigemMunicipioId.Value, out origem!)) { erros.Add($"{rotulo}: cidade de origem inválida."); continue; }
+            }
+            else if (atual?.OrigemTexto != null && atual.OrigemMunicipioId == null) origem = atual.OrigemTexto;
+            else { erros.Add($"{rotulo}: selecione a cidade de origem."); continue; }
+
             var dias = Dias(p.DataInicio, p.DataFim);
             var mesmasDatas = atual != null && atual.DataInicio == p.DataInicio && atual.DataFim == p.DataFim;
             var itensCalc = new List<ItemCalculadoDto>();
-            if (p.Itens.Count == 0) erros.Add($"{rotulo}: informe ao menos um tipo de diária.");
+            var passagem = CalcularPassagem(p, rotulo, erros);
+            if (p.Itens.Count == 0 && passagem == null) erros.Add($"{rotulo}: informe ao menos um tipo de diária ou a passagem aérea.");
             if (p.Itens.GroupBy(x => x.TipoDiariaId).Any(g => g.Count() > 1)) erros.Add($"{rotulo}: tipo de diária repetido.");
 
             foreach (var it in p.Itens)
             {
                 if (!tipos.TryGetValue(it.TipoDiariaId, out var tipo)) { erros.Add($"{rotulo}: selecione o tipo de diária."); continue; }
                 var itemAtual = it.Id.HasValue ? atual?.Itens.FirstOrDefault(x => x.Id == it.Id) : null;
-                if (tipo.ValorLivre)
+                // Tipo "valor livre" da versão 004 (passagem como diária): só aceito em item antigo que não mudou.
+                if (tipo.ValorLivre && itemAtual?.TipoDiariaId != tipo.Id)
                 {
-                    // Valor digitado (ex.: passagem aérea): não consulta a Tabela de Valores e não conta como dia.
-                    var valor = it.ValorUnitario ?? (itemAtual?.TipoDiariaId == tipo.Id ? itemAtual.ValorUnitario : null);
-                    if (valor is not > 0) erros.Add($"{rotulo}: informe o valor de {tipo.Nome}.");
-                    else if (decimal.Round(valor.Value, 2) != valor) erros.Add($"{rotulo}: o valor de {tipo.Nome} deve ter no máximo 2 casas decimais.");
-                    itensCalc.Add(new ItemCalculadoDto(it.Id, tipo.Id, tipo.Nome, 1, valor ?? 0, decimal.Round(valor ?? 0, 2), true));
+                    erros.Add($"{rotulo}: o tipo {tipo.Nome} não é mais usado; informe a passagem aérea no campo próprio do período.");
                     continue;
                 }
 
-                var diariasDoPeriodo = p.Itens.Count(x => tipos.TryGetValue(x.TipoDiariaId, out var t) && !t.ValorLivre);
-                var quantidade = it.Quantidade ?? (diariasDoPeriodo == 1 ? dias : 0);
+                var quantidade = it.Quantidade ?? (p.Itens.Count == 1 ? dias : 0);
                 if (quantidade <= 0 || quantidade % 0.5m != 0)
                     erros.Add($"{rotulo}: quantidade de {tipo.Nome} deve ser múltipla de 0,5 e maior que zero.");
 
@@ -234,18 +259,37 @@ public class DiariasService
                     erros.Add($"{rotulo}: não há valor cadastrado para diária {tipo.Nome}, vínculo {vinculo} e o cargo do servidor nesta data. Ajuste a Tabela de Valores.");
 
                 itensCalc.Add(new ItemCalculadoDto(it.Id, tipo.Id, tipo.Nome, quantidade, unitario ?? 0,
-                    decimal.Round((unitario ?? 0) * quantidade, 2), false));
+                    decimal.Round((unitario ?? 0) * quantidade, 2)));
             }
 
-            var soma = itensCalc.Where(x => !x.ValorLivre).Sum(x => x.Quantidade);
+            var soma = itensCalc.Where(x => !tipos[x.TipoDiariaId].ValorLivre).Sum(x => x.Quantidade);
             // Legado com datas inalteradas pode ter quantidades fora da regra atual; não bloqueia a edição de outros campos.
             if (soma > dias && !(existente?.Origem == Origens.Legado && mesmasDatas))
                 erros.Add($"{rotulo}: total de {soma:0.#} diárias excede os {dias} dias do período.");
 
-            resultado.Add(new PeriodoCalculadoDto(p.Id, p.DataInicio, p.DataFim, dias, p.DestinoMunicipioId, destino,
-                atual?.DestinoTexto, mesmasDatas && atual!.IsentoSobreposicao, itensCalc, itensCalc.Sum(x => x.ValorTotal)));
+            resultado.Add(new PeriodoCalculadoDto(p.Id, p.DataInicio, p.DataFim, dias, p.OrigemMunicipioId, origem, atual?.OrigemTexto,
+                p.DestinoMunicipioId, destino, atual?.DestinoTexto, mesmasDatas && atual!.IsentoSobreposicao, itensCalc,
+                itensCalc.Sum(x => x.ValorTotal), passagem));
         }
         return (resultado, erros);
+    }
+
+    /// <summary>Passagem aérea do período: valores de ida/volta digitados (não há tabela), total = ida + volta.</summary>
+    private static PassagemDto? CalcularPassagem(PeriodoRequest p, string rotulo, List<string> erros)
+    {
+        var x = p.Passagem;
+        if (x == null) return null;
+        var ida = x.ValorIda ?? 0;
+        var volta = x.ValorVolta ?? 0;
+        if (ida < 0 || volta < 0) erros.Add($"{rotulo}: valor da passagem não pode ser negativo.");
+        if (ida + volta <= 0) erros.Add($"{rotulo}: informe o valor da passagem de ida e/ou de volta.");
+        if (decimal.Round(ida, 2) != ida || decimal.Round(volta, 2) != volta) erros.Add($"{rotulo}: valores da passagem com no máximo 2 casas decimais.");
+        var agencia = string.IsNullOrWhiteSpace(x.Agencia) ? null : x.Agencia.Trim();
+        if (agencia == null) erros.Add($"{rotulo}: informe a agência/companhia aérea da passagem.");
+        if (x.DataIda.HasValue && x.DataVolta.HasValue && x.DataVolta < x.DataIda)
+            erros.Add($"{rotulo}: a data de volta da passagem é anterior à de ida.");
+        return new PassagemDto(agencia, string.IsNullOrWhiteSpace(x.Categoria) ? null : x.Categoria.Trim(), x.DataIda ?? p.DataInicio,
+            x.DataVolta, ida, volta, ida + volta);
     }
 
     private async Task<List<ConflitoDto>> ConflitosAsync(int servidorId, List<PeriodoCalculadoDto> periodos, int? ignorarDiariaId)
@@ -277,8 +321,6 @@ public class DiariasService
     private async Task<int> GravarAsync(int? id, DiariaRequest req)
     {
         if (string.IsNullOrWhiteSpace(req.Objetivo)) throw new RegraNegocioException("Informe o objetivo da viagem.");
-        if (req.OrigemMunicipioId.HasValue && !await _db.Municipios.AnyAsync(m => m.Id == req.OrigemMunicipioId))
-            throw new RegraNegocioException("Cidade de origem inválida.");
 
         await using var tx = await _db.Database.BeginTransactionAsync();
         // Serializa lançamentos do mesmo servidor: sem isso, dois operadores simultâneos passariam
@@ -286,7 +328,8 @@ public class DiariasService
         await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(1, {req.ServidorId})");
 
         var diaria = id.HasValue
-            ? await _db.Diarias.Include(d => d.Periodos).ThenInclude(p => p.Itens).AsSplitQuery().FirstOrDefaultAsync(d => d.Id == id)
+            ? await _db.Diarias.Include(d => d.Periodos).ThenInclude(p => p.Itens)
+                  .Include(d => d.Periodos).ThenInclude(p => p.Passagem).AsSplitQuery().FirstOrDefaultAsync(d => d.Id == id)
               ?? throw new NaoEncontradoException("Diária não encontrada.")
             : null;
         if (diaria?.Situacao == SituacaoDiaria.Cancelada)
@@ -320,23 +363,24 @@ public class DiariasService
             diaria.CargoId = cargoId;
             diaria.UnidadeId = servidor.UnidadeId;
         }
-        // Cidade de origem: obrigatória; na edição de diária migrada sem município, o texto do legado é mantido.
-        if (req.OrigemMunicipioId.HasValue) diaria.OrigemMunicipioId = req.OrigemMunicipioId;
-        else if (diaria.OrigemMunicipioId == null && string.IsNullOrWhiteSpace(diaria.OrigemTexto))
-            throw new RegraNegocioException("Informe a cidade de origem da viagem.");
         diaria.Objetivo = req.Objetivo.Trim();
         diaria.ProcessoSei = string.IsNullOrWhiteSpace(req.ProcessoSei) ? null : req.ProcessoSei.Trim();
         diaria.Observacao = string.IsNullOrWhiteSpace(req.Observacao) ? null : req.Observacao.Trim();
         diaria.AtualizadoEm = agora;
-        // Qualquer edição (inclusive de aprovada ou rejeitada) volta para análise.
-        diaria.Situacao = SituacaoDiaria.Pendente;
-        diaria.DecididoPorId = null;
-        diaria.DecididoPorNome = null;
-        diaria.DecididoEm = null;
-        diaria.MotivoRejeicao = null;
+        // Aprovação acontece no próprio lançamento (registros antigos pendentes/rejeitados passam a aprovados ao salvar).
+        if (diaria.Situacao != SituacaoDiaria.Aprovada)
+        {
+            diaria.Situacao = SituacaoDiaria.Aprovada;
+            diaria.DecididoPorId = _usuario.Id;
+            diaria.DecididoPorNome = _usuario.Nome;
+            diaria.DecididoEm = agora;
+            diaria.MotivoRejeicao = null;
+        }
 
         SincronizarPeriodos(diaria, calculados, servidor.Id);
-        diaria.ValorTotal = calculados.Sum(c => c.ValorTotal);
+        var (valorDiarias, valorPassagens) = Totais(calculados);
+        diaria.ValorPassagens = valorPassagens;
+        diaria.ValorTotal = valorDiarias + valorPassagens;
 
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
@@ -365,6 +409,22 @@ public class DiariasService
             p.DataInicio = c.DataInicio;
             p.DataFim = c.DataFim;
             if (c.DestinoMunicipioId.HasValue) p.DestinoMunicipioId = c.DestinoMunicipioId;
+            if (c.OrigemMunicipioId.HasValue) p.OrigemMunicipioId = c.OrigemMunicipioId;
+            if (c.Passagem == null)
+            {
+                if (p.Passagem != null) { _db.DiariasPassagens.Remove(p.Passagem); p.Passagem = null; }
+            }
+            else
+            {
+                p.Passagem ??= new DiariaPassagem { Periodo = p };
+                p.Passagem.Agencia = c.Passagem.Agencia;
+                p.Passagem.Categoria = c.Passagem.Categoria;
+                p.Passagem.DataIda = c.Passagem.DataIda;
+                p.Passagem.DataVolta = c.Passagem.DataVolta;
+                p.Passagem.ValorIda = c.Passagem.ValorIda;
+                p.Passagem.ValorVolta = c.Passagem.ValorVolta;
+                p.Passagem.ValorTotal = c.Passagem.ValorTotal;
+            }
             p.IsentoSobreposicao = c.IsentoSobreposicao;
             p.Ativo = true;
             p.ValorTotal = c.ValorTotal;
@@ -391,51 +451,26 @@ public class DiariasService
         }
     }
 
-    // ------------------------------------------------------------------ fluxo
+    // ------------------------------------------------------------------ exclusão
 
-    public Task AprovarAsync(int id) => DecidirAsync(id, SituacaoDiaria.Aprovada, null);
-
-    public Task RejeitarAsync(int id, string motivo)
-    {
-        if (string.IsNullOrWhiteSpace(motivo)) throw new RegraNegocioException("Informe o motivo da rejeição.");
-        return DecidirAsync(id, SituacaoDiaria.Rejeitada, motivo.Trim());
-    }
-
-    private async Task DecidirAsync(int id, string situacao, string? motivo)
+    /// <summary>
+    /// Exclui o lançamento (substitui o antigo cancelamento). A auditoria grava todos os campos da diária, dos períodos,
+    /// itens e passagens excluídos; diárias migradas excluídas não voltam numa nova migração do legado.
+    /// </summary>
+    public async Task ExcluirAsync(int id)
     {
         await using var tx = await _db.Database.BeginTransactionAsync();
-        var diaria = await _db.Diarias.Include(d => d.Periodos).FirstOrDefaultAsync(d => d.Id == id)
+        var diaria = await _db.Diarias.Include(d => d.Periodos).ThenInclude(p => p.Itens)
+                         .Include(d => d.Periodos).ThenInclude(p => p.Passagem).AsSplitQuery()
+                         .FirstOrDefaultAsync(d => d.Id == id)
                      ?? throw new NaoEncontradoException("Diária não encontrada.");
-        if (diaria.Situacao != SituacaoDiaria.Pendente)
-            throw new RegraNegocioException("Somente diárias pendentes podem ser aprovadas ou rejeitadas.");
-        if (diaria.CriadoPorId != null && diaria.CriadoPorId == _usuario.Id && situacao == SituacaoDiaria.Aprovada)
-            throw new RegraNegocioException("Quem lançou a diária não pode aprová-la.");
-
-        diaria.Situacao = situacao;
-        diaria.MotivoRejeicao = motivo;
-        diaria.DecididoPorId = _usuario.Id;
-        diaria.DecididoPorNome = _usuario.Nome;
-        diaria.DecididoEm = DateTime.UtcNow;
-        diaria.AtualizadoEm = DateTime.UtcNow;
-        if (situacao == SituacaoDiaria.Rejeitada)
-            foreach (var p in diaria.Periodos) p.Ativo = false;
-        await _db.SaveChangesAsync();
-        await tx.CommitAsync();
-    }
-
-    public async Task CancelarAsync(int id, string motivo)
-    {
-        if (string.IsNullOrWhiteSpace(motivo)) throw new RegraNegocioException("Informe o motivo do cancelamento.");
-        await using var tx = await _db.Database.BeginTransactionAsync();
-        var diaria = await _db.Diarias.Include(d => d.Periodos).FirstOrDefaultAsync(d => d.Id == id)
-                     ?? throw new NaoEncontradoException("Diária não encontrada.");
-        if (!SituacaoDiaria.OcupaDatas(diaria.Situacao))
-            throw new RegraNegocioException("Somente diárias pendentes ou aprovadas podem ser canceladas.");
-
-        diaria.Situacao = SituacaoDiaria.Cancelada;
-        diaria.MotivoCancelamento = motivo.Trim();
-        diaria.AtualizadoEm = DateTime.UtcNow;
-        foreach (var p in diaria.Periodos) p.Ativo = false;
+        foreach (var p in diaria.Periodos)
+        {
+            _db.DiariasItens.RemoveRange(p.Itens);
+            if (p.Passagem != null) _db.DiariasPassagens.Remove(p.Passagem);
+        }
+        _db.DiariasPeriodos.RemoveRange(diaria.Periodos);
+        _db.Diarias.Remove(diaria);
         await _db.SaveChangesAsync();
         await tx.CommitAsync();
     }

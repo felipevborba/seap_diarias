@@ -57,7 +57,12 @@ public class Migrador
         string? Funcao, string? Cargo, string? Unidade, DateOnly Ida, DateOnly Volta, bool DatasInvertidas,
         decimal IntQtd, decimal IntUnit, decimal IntTotal, decimal ParQtd, decimal ParUnit, decimal ParTotal,
         string DestinoTexto, string? DestinoUf, string? OrigemTexto, string? OrigemUf, string? Finalidade, string? Motivacao, string? Sei, string? Obs,
-        string? Passagem, string Cadastrador, DateTime CriadoEm, string? DatasCorrigidas = null);
+        Passagem? Passagem, string Cadastrador, DateTime CriadoEm, string? DatasCorrigidas = null);
+
+    private sealed record Passagem(string? Agencia, string? Categoria, decimal Ida, decimal Volta)
+    {
+        public decimal Total => Ida + Volta;
+    }
 
     // ---------------------------------------------------------------- execução
 
@@ -75,9 +80,17 @@ public class Migrador
         var sync = await new ServidoresService(_db).SincronizarPoliciaisAsync();
         _log($"Policiais sincronizados: {sync.Criados} criados, {sync.Atualizados} atualizados, {sync.Vinculados} vinculados.");
 
-        // 2. Legado -> registros normalizados.
+        // 2. Legado -> registros normalizados (sem as diárias migradas que foram excluídas no sistema novo).
         var legado = CarregarLegado();
         _log($"Diárias lidas do legado: {legado.Count:N0} ({legado.Count(x => x.DatasCorrigidas != null):N0} com data corrigida — relatório datas_corrigidas.tsv)");
+        var excluidas = await ExcluidasNoSistemaAsync();
+        if (excluidas.Count > 0)
+        {
+            foreach (var d in legado.Where(d => excluidas.Contains(d.Codigo)))
+                Relatar("excluidas_no_sistema_novo.tsv", d.Codigo.ToString(), d.Nome ?? "", d.Ida.ToString("dd/MM/yyyy"));
+            legado = legado.Where(d => !excluidas.Contains(d.Codigo)).ToList();
+            _log($"Diárias excluídas no sistema novo (não voltam): {excluidas.Count:N0} (relatório excluidas_no_sistema_novo.tsv)");
+        }
 
         // 3. Remove migração anterior (idempotência) — mas nunca por cima de trabalho feito no sistema novo:
         //    diária migrada que já foi editada/aprovada/rejeitada/cancelada tem registro de auditoria.
@@ -101,6 +114,7 @@ public class Migrador
         // 5. Servidores, cargos, unidades, municípios, tipos.
         var cargos = await GarantirCargosAsync(unicas);
         var servidorIds = await ResolverServidoresAsync(unicas, cargos);
+        await AtualizarMatriculasAsync();
         var unidades = await _db.Unidades.AsNoTracking().ToListAsync();
         var municipios = await CarregarMunicipiosAsync();
         var tipos = await _db.TiposDiaria.AsNoTracking().ToDictionaryAsync(t => t.Nome, t => t.Id);
@@ -147,43 +161,105 @@ public class Migrador
     }
 
     /// <summary>
-    /// Preenche só a cidade de origem das diárias já migradas (por código do legado), sem apagar nem renumerar nada —
-    /// para bancos em uso. Atualiza apenas diárias de origem LEGADO ainda sem cidade de origem.
+    /// Complementa as diárias já migradas sem apagar nem renumerar nada (para bancos em uso): matrícula nova dos
+    /// servidores e passagens aéreas do legado (que antes iam só como texto na observação).
     /// </summary>
-    public async Task<int> AtualizarOrigemAsync(bool confirmar)
+    public async Task<int> ComplementarAsync(bool confirmar)
     {
         await using var tx = await _db.Database.BeginTransactionAsync();
         await _db.Database.ExecuteSqlRawAsync(
             "SET LOCAL tcp_keepalives_idle = 30; SET LOCAL tcp_keepalives_interval = 10; SET LOCAL tcp_keepalives_count = 3; " +
             "SET LOCAL idle_in_transaction_session_timeout = '5min'");
-        var municipios = await CarregarMunicipiosAsync();
-        var legado = Ler("diaria");
-        var linhas = new List<object?[]>();
-        var semMunicipio = new Dictionary<string, int>();
-        foreach (var r in legado)
-        {
-            var texto = Texto.Limpo(r["cidade_origem"]);
-            if (texto == null) continue;
-            var id = Municipio(municipios, texto, Texto.Uf(r["uf_origem"]));
-            if (id == null) semMunicipio[texto] = semMunicipio.GetValueOrDefault(texto) + 1;
-            linhas.Add(new object?[] { int.Parse(r["codigo"]!), id, Texto.Cortar(texto, 300) });
-        }
+        var matriculas = await AtualizarMatriculasAsync();
+
+        var linhas = CarregarLegado().Where(d => d.Passagem != null)
+            .Select(d => new object?[] { d.Codigo, Texto.Cortar(d.Passagem!.Agencia, 200), Texto.Cortar(d.Passagem.Categoria, 100),
+                d.Ida, d.Volta, d.Passagem.Ida, d.Passagem.Volta, d.Passagem.Total })
+            .ToList();
         var conn = (NpgsqlConnection)_db.Database.GetDbConnection();
-        await _db.Database.ExecuteSqlRawAsync("CREATE TEMP TABLE origem_legado (codigo int, municipio_id int, texto varchar(300)) ON COMMIT DROP");
-        await CopiarAsync(conn, "origem_legado (codigo, municipio_id, texto)", linhas,
-            new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Varchar });
+        await _db.Database.ExecuteSqlRawAsync("CREATE TEMP TABLE passagem_legado (codigo int, agencia varchar(200), categoria varchar(100), " +
+            "data_ida date, data_volta date, valor_ida numeric(12,2), valor_volta numeric(12,2), valor_total numeric(12,2)) ON COMMIT DROP");
+        await CopiarAsync(conn, "passagem_legado", linhas, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar,
+            NpgsqlDbType.Date, NpgsqlDbType.Date, NpgsqlDbType.Numeric, NpgsqlDbType.Numeric, NpgsqlDbType.Numeric });
+        // Diária migrada tem um período só.
         var n = await _db.Database.ExecuteSqlRawAsync(
-            "UPDATE diarias.diaria d SET origem_municipio_id = o.municipio_id, origem_texto = o.texto " +
-            "FROM origem_legado o WHERE d.legado_codigo = o.codigo AND d.origem = 'LEGADO' " +
-            "AND d.origem_municipio_id IS NULL AND d.origem_texto IS NULL");
-        foreach (var (texto, qtd) in semMunicipio.OrderByDescending(x => x.Value))
-            Relatar("origens_sem_municipio.tsv", texto, qtd.ToString());
-        _log($"Cidade de origem: {n:N0} diárias atualizadas ({linhas.Count(l => l[1] != null):N0} com município identificado; " +
-             $"{semMunicipio.Values.Sum():N0} só com o texto do legado — relatório origens_sem_municipio.tsv).");
+            "INSERT INTO diarias.diaria_passagem (periodo_id, agencia, categoria, data_ida, data_volta, valor_ida, valor_volta, valor_total) " +
+            "SELECT p.id, l.agencia, l.categoria, l.data_ida, l.data_volta, l.valor_ida, l.valor_volta, l.valor_total " +
+            "FROM passagem_legado l JOIN diarias.diaria d ON d.legado_codigo = l.codigo AND d.origem = 'LEGADO' " +
+            "JOIN diarias.diaria_periodo p ON p.diaria_id = d.id " +
+            "WHERE NOT EXISTS (SELECT 1 FROM diarias.diaria_passagem x JOIN diarias.diaria_periodo px ON px.id = x.periodo_id WHERE px.diaria_id = d.id)");
+        await _db.Database.ExecuteSqlRawAsync(
+            "UPDATE diarias.diaria d SET valor_passagens = s.passagens, valor_total = s.diarias + s.passagens FROM (" +
+            "SELECT p.diaria_id, sum(p.valor_total) AS diarias, COALESCE(sum(x.valor_total), 0) AS passagens FROM diarias.diaria_periodo p " +
+            "LEFT JOIN diarias.diaria_passagem x ON x.periodo_id = p.id GROUP BY p.diaria_id) s " +
+            "WHERE s.diaria_id = d.id AND d.origem = 'LEGADO' AND d.valor_passagens <> s.passagens");
+        _log($"Passagens aéreas do legado: {n:N0} gravadas (de {linhas.Count:N0} no legado).");
         EscreverRelatorios();
         if (confirmar) { await tx.CommitAsync(); _log("ATUALIZAÇÃO CONFIRMADA (commit)."); }
         else { await tx.RollbackAsync(); _log("Ensaio concluído: nada foi gravado (use --confirmar para efetivar)."); }
-        return n;
+        return matriculas + n;
+    }
+
+    /// <summary>Códigos do legado cujas diárias migradas foram excluídas no sistema novo (pela auditoria).</summary>
+    private async Task<HashSet<int>> ExcluidasNoSistemaAsync() =>
+        (await _db.Database.SqlQueryRaw<int>(
+            "SELECT DISTINCT (alteracoes::jsonb -> 'LegadoCodigo' ->> 0)::int AS \"Value\" FROM comum.auditoria " +
+            "WHERE modulo = 'DIARIAS' AND entidade = 'diaria' AND acao = 'EXCLUSAO' " +
+            "AND alteracoes::jsonb -> 'LegadoCodigo' ->> 0 IS NOT NULL").ToListAsync()).ToHashSet();
+
+    /// <summary>
+    /// Matrícula nova (formato SAD "1234567/01", a usada no legado e na planilha da Controladoria) em todos os
+    /// servidores. Fontes, por CPF: cadastro de servidores do legado, diária mais recente do servidor, cadastro
+    /// antigo (matricula2); sem CPF, pelos dígitos da matrícula ou pelo de-para consultamatricula. A matrícula
+    /// anterior (ex.: a da Carteira) fica em matricula_antiga.
+    /// </summary>
+    private async Task<int> AtualizarMatriculasAsync()
+    {
+        var porCpf = new Dictionary<string, string>();
+        void Guardar(string? cpf, string? matricula)
+        {
+            if (Texto.Cpf(cpf) is { } c && Texto.MatriculaNova(matricula) is { } m) porCpf.TryAdd(c, m);
+        }
+        foreach (var s in Ler("servidor")) Guardar(s["cpf"], s["matricula"]);
+        foreach (var d in Ler("diaria").OrderByDescending(d => d["data_digitacao"])) Guardar(d["cpf"], d["matricula"]);
+        foreach (var s in Ler("servidor_antigo")) Guardar(s["cpf"], s["matricula2"]);
+        var porDigitos = porCpf.Values.Concat(Ler("diaria").Select(d => Texto.MatriculaNova(d["matricula"])))
+            .Where(m => m != null).GroupBy(m => Texto.Matricula(m)).ToDictionary(g => g.Key, g => g.First()!);
+        var deParaAntiga = Ler("consultamatricula")
+            .Select(x => (Antiga: Texto.Matricula(x["matricula"]), Nova: Texto.MatriculaNova(x["novamatricula"])))
+            .Where(x => x.Antiga.Length > 0 && x.Nova != null).GroupBy(x => x.Antiga).ToDictionary(g => g.Key, g => g.First().Nova!);
+
+        var alterados = 0;
+        var servidores = await _db.Servidores.ToListAsync();
+        // Servidores sem CPF têm matrícula única (ix_servidor_matricula_sem_cpf).
+        var usadasSemCpf = servidores.Where(s => s.Cpf == null && s.Matricula != null).Select(s => s.Matricula!).ToHashSet();
+        foreach (var s in servidores)
+        {
+            var atual = Texto.Matricula(s.Matricula);
+            var nova = (s.Cpf != null ? porCpf.GetValueOrDefault(s.Cpf) : null)
+                       ?? (atual.Length > 0 ? porDigitos.GetValueOrDefault(atual) : null)
+                       ?? (atual.Length > 0 ? deParaAntiga.GetValueOrDefault(atual) : null)
+                       ?? (Texto.Matricula(s.MatriculaAntiga) is { Length: > 0 } antiga ? deParaAntiga.GetValueOrDefault(antiga) : null);
+            if (nova == null)
+            {
+                Relatar("servidores_sem_matricula_nova.tsv", s.Nome, s.Cpf ?? "", s.Matricula ?? "");
+                continue;
+            }
+            if (nova == s.Matricula) continue;
+            if (s.Cpf == null && !usadasSemCpf.Add(nova))
+            {
+                Relatar("matriculas_conflitantes.tsv", s.Nome, s.Matricula ?? "", nova);
+                continue;
+            }
+            if (s.Matricula != null && atual != Texto.Matricula(nova) && s.MatriculaAntiga == null) s.MatriculaAntiga = s.Matricula;
+            Relatar("matriculas_atualizadas.tsv", s.Nome, s.Cpf ?? "", s.Matricula ?? "", nova);
+            s.Matricula = nova;
+            s.AtualizadoEm = DateTime.UtcNow;
+            alterados++;
+        }
+        await _db.SaveChangesAsync();
+        _log($"Matrículas novas: {alterados:N0} servidores atualizados (relatórios matriculas_atualizadas.tsv e servidores_sem_matricula_nova.tsv).");
+        return alterados;
     }
 
     // ---------------------------------------------------------------- etapas
@@ -251,9 +327,12 @@ public class Migrador
                 Relatar("datas_invertidas_corrigidas.tsv", codigo.ToString(), r["datadadiaria_ida"]!, r["datadadiaria_volta"]!);
             }
 
-            var passagem = Texto.Decimal(r["passagem_valor_total_passagem"]) > 0
-                ? $"Passagem ({Texto.Limpo(r["passagem_agencia_companhia_aerea"]) ?? "agência não informada"}): " +
-                  Texto.Decimal(r["passagem_valor_total_passagem"]).ToString("C", new CultureInfo("pt-BR"))
+            // Passagem: no legado, agência/categoria vazias são gravadas como "0" ou "vazio".
+            var pasIda = Texto.Decimal(r["passagem_valor_ida"]);
+            var pasVolta = Texto.Decimal(r["passagem_valor_volta"]);
+            if (pasIda + pasVolta == 0) pasIda = Texto.Decimal(r["passagem_valor_total_passagem"]);
+            var passagem = pasIda + pasVolta > 0
+                ? new Passagem(Texto.SemZero(r["passagem_agencia_companhia_aerea"]), Texto.SemZero(r["passagem_categoria"]), pasIda, pasVolta)
                 : null;
 
             if (volta > DateOnly.FromDateTime(DateTime.Today).AddMonths(6))
@@ -299,7 +378,9 @@ public class Migrador
     {
         var existentes = await _db.Servidores.ToListAsync();
         var porCpf = existentes.Where(s => s.Cpf != null).ToDictionary(s => s.Cpf!);
-        var porMatriculaSemCpf = existentes.Where(s => s.Cpf == null && s.Matricula != null).ToDictionary(s => s.Matricula!);
+        // Matrícula comparada só pelos dígitos: depois de AtualizarMatriculasAsync ela fica no formato "1234567/01".
+        var porMatriculaSemCpf = existentes.Where(s => s.Cpf == null && s.Matricula != null)
+            .GroupBy(s => Texto.Matricula(s.Matricula)).ToDictionary(g => g.Key, g => g.First());
         var policiais = await _db.PoliciaisPenais.AsNoTracking().Select(p => new { p.Id, p.Cpf, p.Matricula }).ToListAsync();
         var cpfPorMatriculaCarteira = policiais.Where(p => Texto.Cpf(p.Cpf) != null && !string.IsNullOrEmpty(p.Matricula))
             .GroupBy(p => Texto.Matricula(p.Matricula)).ToDictionary(g => g.Key, g => Texto.Cpf(g.First().Cpf)!);
@@ -334,7 +415,7 @@ public class Migrador
                 };
                 _db.Servidores.Add(s);
                 novos.Add(s);
-                if (cpf != null) porCpf[cpf] = s; else if (s.Matricula != null) porMatriculaSemCpf[s.Matricula] = s;
+                if (cpf != null) porCpf[cpf] = s; else if (s.Matricula != null) porMatriculaSemCpf[Texto.Matricula(s.Matricula)] = s;
                 if (cpf == null)
                     Relatar("servidores_sem_cpf.tsv", s.Matricula ?? "", s.Nome, g.Count().ToString());
             }
@@ -506,11 +587,13 @@ public class Migrador
         var linhasDiaria = new List<object?[]>();
         var linhasPeriodo = new List<object?[]>();
         var linhasItem = new List<object?[]>();
+        var linhasPassagem = new List<object?[]>();
         for (var i = 0; i < diarias.Count; i++)
         {
             var d = diarias[i];
             var servidorId = servidorIds[d.ServidorChave];
-            var situacao = d.Status switch { "Pendente" => SituacaoDiaria.Pendente, "Rejeitado" => SituacaoDiaria.Rejeitada, _ => SituacaoDiaria.Aprovada };
+            // Sem etapa de aprovação no sistema novo: pendentes do legado entram aprovadas.
+            var situacao = d.Status == "Rejeitado" ? SituacaoDiaria.Rejeitada : SituacaoDiaria.Aprovada;
             var nomeCargo = Texto.Cargo(d.Cargo);
             var unidade = Unidade(unidades, d.Unidade) ?? servidores.GetValueOrDefault(servidorId);
 
@@ -523,7 +606,6 @@ public class Migrador
             };
             var obs = new List<string>();
             if (d.Obs != null) obs.Add(d.Obs);
-            if (d.Passagem != null) obs.Add(d.Passagem);
             if (d.DatasCorrigidas != null) obs.Add(d.DatasCorrigidas);
             if (d.DatasInvertidas) obs.Add("Datas de ida e volta estavam invertidas no legado e foram corrigidas na migração.");
             if (d.Sei != null && d.Sei.Length > 50) obs.Add($"Processo SEI (completo): {d.Sei}");
@@ -536,46 +618,55 @@ public class Migrador
             if (d.ParQtd > 0) itens.Add((parcial, d.ParQtd, d.ParUnit, d.ParTotal));
             if (itens.Count == 0) Relatar("diarias_sem_itens.tsv", d.Codigo.ToString(), d.Nome ?? "", d.Ida.ToString("dd/MM/yyyy"));
             var total = itens.Sum(x => x.Total);
+            var passagens = d.Passagem?.Total ?? 0;
             var ocupa = situacao is SituacaoDiaria.Pendente or SituacaoDiaria.Aprovada;
 
             linhasDiaria.Add(new object?[]
             {
                 ids[i], servidorId, (short)Texto.Vinculo(d.Funcao, d.Cargo), nomeCargo == null ? null : cargos.GetValueOrDefault(nomeCargo),
                 unidade, Texto.Cortar(objetivo, 1000)!, Texto.Cortar(d.Sei, 50), Texto.Cortar(obs.Count > 0 ? string.Join(" | ", obs) : null, 2000),
-                situacao, total, Origens.Legado, d.Codigo, NomeCadastrador(cadastradores, d.Cadastrador), d.CriadoEm, d.CriadoEm,
-                situacao == SituacaoDiaria.Aprovada ? "Aprovada no sistema legado" : null,
-                situacao == SituacaoDiaria.Aprovada ? d.CriadoEm : null,
-                d.OrigemTexto == null ? null : Municipio(municipios, d.OrigemTexto, d.OrigemUf),
-                Texto.Cortar(d.OrigemTexto, 300)
+                situacao, total + passagens, passagens, Origens.Legado, d.Codigo, NomeCadastrador(cadastradores, d.Cadastrador), d.CriadoEm,
+                d.CriadoEm,
+                situacao == SituacaoDiaria.Aprovada ? (d.Status == "Aprovado" ? "Aprovada no sistema legado" : "Lançada no sistema legado") : null,
+                situacao == SituacaoDiaria.Aprovada ? d.CriadoEm : null
             });
             linhasPeriodo.Add(new object?[]
             {
                 idsPeriodo[i], ids[i], servidorId, d.Ida, d.Volta, municipio, Texto.Cortar(d.DestinoTexto, 300), total, ocupa,
-                isentos.Contains(d.Codigo)
+                isentos.Contains(d.Codigo),
+                d.OrigemTexto == null ? null : Municipio(municipios, d.OrigemTexto, d.OrigemUf),
+                Texto.Cortar(d.OrigemTexto, 300)
             });
             foreach (var it in itens)
                 linhasItem.Add(new object?[] { idsPeriodo[i], it.Tipo, it.Qtd, it.Unit, it.Total });
+            if (d.Passagem is { } pas)
+                linhasPassagem.Add(new object?[] { idsPeriodo[i], Texto.Cortar(pas.Agencia, 200), Texto.Cortar(pas.Categoria, 100), d.Ida, d.Volta,
+                    pas.Ida, pas.Volta, pas.Total });
         }
 
         await CopiarAsync(conn, "diarias.diaria (id, servidor_id, vinculo, cargo_id, unidade_id, objetivo, processo_sei, observacao, " +
-            "situacao, valor_total, origem, legado_codigo, criado_por_nome, criado_em, atualizado_em, decidido_por_nome, decidido_em, " +
-            "origem_municipio_id, origem_texto)",
+            "situacao, valor_total, valor_passagens, origem, legado_codigo, criado_por_nome, criado_em, atualizado_em, decidido_por_nome, decidido_em)",
             linhasDiaria, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Smallint, NpgsqlDbType.Integer, NpgsqlDbType.Integer,
-                NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Numeric,
+                NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Numeric, NpgsqlDbType.Numeric,
                 NpgsqlDbType.Varchar, NpgsqlDbType.Integer, NpgsqlDbType.Varchar, NpgsqlDbType.TimestampTz, NpgsqlDbType.TimestampTz,
-                NpgsqlDbType.Varchar, NpgsqlDbType.TimestampTz, NpgsqlDbType.Integer, NpgsqlDbType.Varchar });
+                NpgsqlDbType.Varchar, NpgsqlDbType.TimestampTz });
         await CopiarAsync(conn, "diarias.diaria_periodo (id, diaria_id, servidor_id, data_inicio, data_fim, destino_municipio_id, " +
-            "destino_texto, valor_total, ativo, isento_sobreposicao)",
+            "destino_texto, valor_total, ativo, isento_sobreposicao, origem_municipio_id, origem_texto)",
             linhasPeriodo, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Date, NpgsqlDbType.Date,
-                NpgsqlDbType.Integer, NpgsqlDbType.Varchar, NpgsqlDbType.Numeric, NpgsqlDbType.Boolean, NpgsqlDbType.Boolean });
+                NpgsqlDbType.Integer, NpgsqlDbType.Varchar, NpgsqlDbType.Numeric, NpgsqlDbType.Boolean, NpgsqlDbType.Boolean,
+                NpgsqlDbType.Integer, NpgsqlDbType.Varchar });
         await CopiarAsync(conn, "diarias.diaria_item (periodo_id, tipo_diaria_id, quantidade, valor_unitario, valor_total)",
             linhasItem, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer, NpgsqlDbType.Numeric, NpgsqlDbType.Numeric, NpgsqlDbType.Numeric });
+        await CopiarAsync(conn, "diarias.diaria_passagem (periodo_id, agencia, categoria, data_ida, data_volta, valor_ida, valor_volta, valor_total)",
+            linhasPassagem, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Varchar, NpgsqlDbType.Varchar, NpgsqlDbType.Date, NpgsqlDbType.Date,
+                NpgsqlDbType.Numeric, NpgsqlDbType.Numeric, NpgsqlDbType.Numeric });
 
         foreach (var (texto, qtd) in semMunicipio.OrderByDescending(x => x.Value))
             Relatar("destinos_sem_municipio.tsv", texto, qtd.ToString());
         foreach (var (texto, qtd) in _lotacoesSemUnidade.OrderByDescending(x => x.Value))
             Relatar("lotacoes_sem_unidade.tsv", texto, qtd.ToString());
-        _log($"Gravados: {linhasDiaria.Count:N0} diárias, {linhasPeriodo.Count:N0} períodos, {linhasItem.Count:N0} itens. " +
+        _log($"Gravados: {linhasDiaria.Count:N0} diárias, {linhasPeriodo.Count:N0} períodos, {linhasItem.Count:N0} itens, " +
+             $"{linhasPassagem.Count:N0} passagens. " +
              $"Destinos sem município: {semMunicipio.Values.Sum():N0} períodos em {semMunicipio.Count:N0} textos (relatório destinos_sem_municipio.tsv).");
         return linhasDiaria.Count;
     }
@@ -608,7 +699,8 @@ public class Migrador
 
     private async Task<object> ConferirAsync(List<LegadoDiaria> legado)
     {
-        var esperado = legado.Sum(d => d.IntTotal + d.ParTotal);
+        var esperadoItens = legado.Sum(d => d.IntTotal + d.ParTotal);
+        var esperado = esperadoItens + legado.Sum(d => d.Passagem?.Total ?? 0);
         var porSituacaoLegado = legado.GroupBy(d => d.Status).ToDictionary(g => g.Key, g => g.Count());
         var gravado = await _db.Diarias.Where(d => d.Origem == Origens.Legado)
             .GroupBy(_ => 1).Select(g => new { Qtd = g.Count(), Valor = g.Sum(d => d.ValorTotal) }).FirstAsync();
@@ -619,7 +711,7 @@ public class Migrador
         var porSituacao = await _db.Diarias.Where(d => d.Origem == Origens.Legado).GroupBy(d => d.Situacao)
             .Select(g => new { g.Key, Qtd = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Qtd);
 
-        var ok = gravado.Qtd == legado.Count && gravado.Valor == esperado && itens == esperado;
+        var ok = gravado.Qtd == legado.Count && gravado.Valor == esperado && itens == esperadoItens;
         _log($"CONFERÊNCIA {(ok ? "OK" : "DIVERGENTE")}: legado {legado.Count:N0} diárias / {esperado:C} | gravado {gravado.Qtd:N0} / {gravado.Valor:C} (itens {itens:C})");
         _log($"  situação legado {JsonSerializer.Serialize(porSituacaoLegado)} -> novo {JsonSerializer.Serialize(porSituacao)}");
         if (!ok) throw new InvalidOperationException("Conferência de totais divergente: migração abortada (nada foi gravado).");
@@ -641,7 +733,10 @@ public class Migrador
             ["diarias_sem_itens.tsv"] = "codigo\tservidor\tida",
             ["diarias_nao_migradas.tsv"] = "codigo\tmotivo\tservidor",
             ["datas_futuras_suspeitas.tsv"] = "codigo\tservidor\tida\tvolta\tdata_cadastro",
-            ["origens_sem_municipio.tsv"] = "texto_legado\tdiarias",
+            ["excluidas_no_sistema_novo.tsv"] = "codigo\tservidor\tida",
+            ["matriculas_atualizadas.tsv"] = "servidor\tcpf\tmatricula_anterior\tmatricula_nova",
+            ["servidores_sem_matricula_nova.tsv"] = "servidor\tcpf\tmatricula",
+            ["matriculas_conflitantes.tsv"] = "servidor_sem_cpf\tmatricula_mantida\tmatricula_nova_ja_usada",
             ["datas_corrigidas.tsv"] = "codigo\tservidor\tida_legado\tvolta_legado\tida_corrigida\tvolta_corrigida\tevidencias",
             ["correcoes_de_data_ignoradas.tsv"] = "codigo\tsituacao_no_legado\tesperado",
         };

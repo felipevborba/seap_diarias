@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api';
 import { Permitido } from '../components/layout/Layout';
-import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, Modal, Selo, useAviso } from '../components/ui';
+import { Alerta, CabecalhoPagina, Carregando, Icone, Modal, Selo, useAviso } from '../components/ui';
 import { SeloSituacao } from '../components/ui/Situacao';
 import { fmtCpf, fmtData, fmtDataHora, fmtMoeda, fmtNumero } from '../lib/formato';
 import { useDados } from '../lib/useDados';
@@ -11,12 +11,14 @@ const NOMES_CAMPO = {
   ServidorId: 'Servidor', Objetivo: 'Objetivo', ProcessoSei: 'Processo SEI', Observacao: 'Observação',
   Situacao: 'Situação', MotivoCancelamento: 'Motivo do cancelamento', MotivoRejeicao: 'Motivo da rejeição',
   ValorTotal: 'Valor total', DataInicio: 'Início', DataFim: 'Fim', TipoDiariaId: 'Tipo', DestinoMunicipioId: 'Destino',
-  Quantidade: 'Quantidade', ValorUnitario: 'Valor unitário', Ativo: 'Ativo', DecididoPorNome: 'Decidido por',
+  OrigemMunicipioId: 'Cidade de origem', Quantidade: 'Quantidade', ValorUnitario: 'Valor unitário', Ativo: 'Ativo',
+  DecididoPorNome: 'Decidido por', ValorPassagens: 'Valor das passagens', Agencia: 'Agência/companhia aérea', Categoria: 'Categoria',
+  DataIda: 'Data de ida', DataVolta: 'Data de volta', ValorIda: 'Valor da ida', ValorVolta: 'Valor da volta',
 };
 const OCULTOS = new Set(['Id', 'DiariaId', 'PeriodoId', 'AtualizadoEm', 'CriadoEm', 'CriadoPorId', 'CriadoPorNome', 'ServidorId',
   'DecididoPorId', 'DecididoEm']);
-const MOEDA = new Set(['ValorTotal', 'ValorUnitario']);
-const DATA = new Set(['DataInicio', 'DataFim']);
+const MOEDA = new Set(['ValorTotal', 'ValorUnitario', 'ValorPassagens', 'ValorIda', 'ValorVolta']);
+const DATA = new Set(['DataInicio', 'DataFim', 'DataIda', 'DataVolta']);
 const valorCampo = (campo, v) => {
   if (v === null || v === undefined || v === '') return '—';
   if (MOEDA.has(campo)) return fmtMoeda(v);
@@ -26,7 +28,7 @@ const valorCampo = (campo, v) => {
   return String(v);
 };
 const ACOES = { INCLUSAO: ['Inclusão', 'verde'], ALTERACAO: ['Alteração', 'azul'], EXCLUSAO: ['Exclusão', 'vermelho'] };
-const ENTIDADES = { diaria: 'Diária', diaria_periodo: 'Período', diaria_item: 'Tipo de diária' };
+const ENTIDADES = { diaria: 'Diária', diaria_periodo: 'Período', diaria_item: 'Tipo de diária', diaria_passagem: 'Passagem aérea' };
 
 function Info({ rotulo, children }) {
   return (
@@ -40,29 +42,25 @@ function Info({ rotulo, children }) {
 export default function DiariaDetalhe() {
   const { id } = useParams();
   const avisar = useAviso();
-  const { dados: d, carregando, erro, recarregar } = useDados(`/api/diarias/${id}`);
+  const navigate = useNavigate();
+  const { dados: d, carregando, erro } = useDados(`/api/diarias/${id}`);
   const historico = useDados(`/api/diarias/${id}/historico`);
-  const [acao, setAcao] = useState(null); // 'cancelar' | 'rejeitar'
-  const [motivo, setMotivo] = useState('');
+  const [excluindo, setExcluindo] = useState(false);
   const [erroAcao, setErroAcao] = useState('');
   const [enviando, setEnviando] = useState(false);
 
-  const executar = async (rota, corpo) => {
+  const excluir = async () => {
     setErroAcao('');
     setEnviando(true);
-    const r = await api.post(`/api/diarias/${id}/${rota}`, corpo);
+    const r = await api.del(`/api/diarias/${id}`);
     setEnviando(false);
-    if (!r.success) { setErroAcao(r.message); avisar(r.message, 'erro'); return; }
-    setAcao(null);
-    setMotivo('');
+    if (!r.success) { setErroAcao(r.message); return; }
     avisar(r.message);
-    recarregar();
-    historico.recarregar();
+    navigate('/diarias');
   };
 
   if (carregando && !d) return <Carregando />;
   if (!d) return <Alerta>{erro}</Alerta>;
-  const vigente = d.situacao === 'PENDENTE' || d.situacao === 'APROVADA';
   const editavel = d.situacao !== 'CANCELADA';
 
   return (
@@ -74,25 +72,16 @@ export default function DiariaDetalhe() {
           <>
             <Link to="/diarias" className="btn-secundario"><Icone nome="arrow_back" /> Voltar</Link>
             <Permitido perfis={['ADMIN', 'OPERADOR']}>
-              {vigente && <button type="button" className="btn-secundario !text-error" onClick={() => setAcao('cancelar')}><Icone nome="block" /> Cancelar</button>}
-              {editavel && <Link to={`/diarias/${d.id}/editar`} className="btn-secundario"><Icone nome="edit" /> Editar</Link>}
+              <button type="button" className="btn-secundario !text-error" onClick={() => { setErroAcao(''); setExcluindo(true); }}><Icone nome="delete" /> Excluir</button>
+              {editavel && <Link to={`/diarias/${d.id}/editar`} className="btn-primario"><Icone nome="edit" /> Editar</Link>}
             </Permitido>
-            {d.situacao === 'PENDENTE' && (
-              <Permitido perfis={['ADMIN']}>
-                <button type="button" className="btn-secundario !text-error" onClick={() => setAcao('rejeitar')}><Icone nome="thumb_down" /> Rejeitar</button>
-                <button type="button" className="btn-primario" disabled={enviando} onClick={() => executar('aprovar')}><Icone nome="check_circle" /> Aprovar</button>
-              </Permitido>
-            )}
           </>
         }
       />
 
-      {d.situacao === 'CANCELADA' && <Alerta className="mb-4">Cancelada. Motivo: {d.motivoCancelamento}</Alerta>}
+      {d.situacao === 'CANCELADA' && <Alerta className="mb-4">Cancelada (versão anterior do sistema). Motivo: {d.motivoCancelamento}</Alerta>}
       {d.situacao === 'REJEITADA' && (
-        <Alerta className="mb-4">Rejeitada por {d.decididoPorNome} em {fmtDataHora(d.decididoEm)}. Motivo: {d.motivoRejeicao}. Edite para reenviar à aprovação.</Alerta>
-      )}
-      {d.situacao === 'APROVADA' && d.decididoPorNome && (
-        <Alerta tipo="sucesso" className="mb-4">Aprovada por {d.decididoPorNome}{d.decididoEm ? ` em ${fmtDataHora(d.decididoEm)}` : ''}.</Alerta>
+        <Alerta className="mb-4">Rejeitada por {d.decididoPorNome} em {fmtDataHora(d.decididoEm)}. Motivo: {d.motivoRejeicao}. Ao salvar uma edição ela volta a valer.</Alerta>
       )}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-gutter-grid">
@@ -108,7 +97,7 @@ export default function DiariaDetalhe() {
               <Info rotulo="Vínculo">{d.vinculo}</Info>
               <Info rotulo="Cargo">{d.cargo}</Info>
               <Info rotulo="Lotação">{d.unidade}</Info>
-              <Info rotulo="Cidade de origem">{d.cidadeOrigem}{!d.cidadeOrigemId && d.cidadeOrigemTexto ? ' (texto do sistema antigo)' : ''}</Info>
+              <Info rotulo="Órgão">SEAP - Secretaria de Administração Penitenciária</Info>
               <Info rotulo="Data do cadastro">{fmtDataHora(d.criadoEm)}</Info>
               <Info rotulo="Processo SEI">{d.processoSei}</Info>
               <div className="col-span-2 md:col-span-3"><Info rotulo="Objetivo">{d.objetivo}</Info></div>
@@ -122,40 +111,62 @@ export default function DiariaDetalhe() {
             <div className="overflow-x-auto">
               <table className="tabela">
                 <thead>
-                  <tr><th>Período</th><th>Destino</th><th>Tipo</th><th className="text-right">Qtd.</th><th className="text-right">Unitário</th><th className="text-right">Total</th></tr>
+                  <tr><th>Período</th><th>Origem → Destino</th><th>Item</th><th className="text-right">Qtd. × unitário</th><th className="text-right">Total</th></tr>
                 </thead>
                 <tbody>
-                  {d.periodos.flatMap((p) => p.itens.length ? p.itens.map((it, k) => (
-                    <tr key={`${p.id}-${it.id}`}>
-                      {k === 0 && (
-                        <>
-                          <td rowSpan={p.itens.length} className="whitespace-nowrap tabular">
-                            {fmtData(p.dataInicio)} a {fmtData(p.dataFim)}
-                            {p.isentoSobreposicao && <div className="mt-1"><Selo cor="amarelo">Sobreposição herdada do legado</Selo></div>}
-                          </td>
-                          <td rowSpan={p.itens.length}>
-                            {p.destino}
-                            {!p.destinoMunicipioId && <div className="font-label-md text-label-md text-on-surface-variant">sem município identificado</div>}
-                          </td>
-                        </>
-                      )}
-                      <td>{it.tipoDiaria}</td>
-                      <td className="text-right tabular">{fmtNumero(it.quantidade)}</td>
-                      <td className="text-right tabular">{fmtMoeda(it.valorUnitario)}</td>
-                      <td className="text-right tabular font-semibold">{fmtMoeda(it.valorTotal)}</td>
-                    </tr>
-                  )) : [(
-                    <tr key={p.id}>
-                      <td className="whitespace-nowrap tabular">{fmtData(p.dataInicio)} a {fmtData(p.dataFim)}</td>
-                      <td>{p.destino}</td>
-                      <td colSpan={4} className="text-on-surface-variant">Sem diárias informadas no sistema antigo</td>
-                    </tr>
-                  )])}
+                  {d.periodos.flatMap((p) => {
+                    const linhas = [
+                      ...p.itens.map((it) => ({ chave: `i${it.id}`, item: it.tipoDiaria, unit: `${fmtNumero(it.quantidade)} × ${fmtMoeda(it.valorUnitario)}`, total: it.valorTotal })),
+                      ...(p.passagem ? [{
+                        chave: 'pas',
+                        item: (
+                          <>
+                            <div className="flex items-center gap-1.5"><Icone nome="flight" className="text-base text-primary" /> Passagem aérea</div>
+                            <div className="font-label-md text-label-md text-on-surface-variant">
+                              {p.passagem.agencia}{p.passagem.categoria ? ` · ${p.passagem.categoria}` : ''}
+                              {p.passagem.dataIda ? ` · ida ${fmtData(p.passagem.dataIda)}` : ''}{p.passagem.dataVolta ? ` · volta ${fmtData(p.passagem.dataVolta)}` : ''}
+                            </div>
+                          </>
+                        ),
+                        unit: <span className="font-label-md text-label-md">ida {fmtMoeda(p.passagem.valorIda)}<br />volta {fmtMoeda(p.passagem.valorVolta)}</span>,
+                        total: p.passagem.valorTotal,
+                      }] : []),
+                    ];
+                    if (!linhas.length) linhas.push({ chave: 'vazio', item: <span className="text-on-surface-variant">Sem diárias informadas no sistema antigo</span>, unit: '', total: null });
+                    return linhas.map((l, k) => (
+                      <tr key={`${p.id}-${l.chave}`}>
+                        {k === 0 && (
+                          <>
+                            <td rowSpan={linhas.length} className="whitespace-nowrap tabular align-top">
+                              {fmtData(p.dataInicio)}<br /><span className="text-on-surface-variant">a</span> {fmtData(p.dataFim)}
+                              {p.isentoSobreposicao && <div className="mt-1"><Selo cor="amarelo">Sobreposição herdada do legado</Selo></div>}
+                            </td>
+                            <td rowSpan={linhas.length} className="align-top">
+                              <div className="font-label-md text-label-md text-on-surface-variant">de {p.origem}{!p.origemMunicipioId && p.origemTexto ? ' (texto do sistema antigo)' : ''}</div>
+                              <div>{p.destino}</div>
+                              {!p.destinoMunicipioId && <div className="font-label-md text-label-md text-on-surface-variant">sem município identificado</div>}
+                            </td>
+                          </>
+                        )}
+                        <td className="min-w-[10rem]">{l.item}</td>
+                        <td className="text-right tabular whitespace-nowrap">{l.unit}</td>
+                        <td className="text-right tabular font-semibold whitespace-nowrap">{l.total == null ? '' : fmtMoeda(l.total)}</td>
+                      </tr>
+                    ));
+                  })}
                 </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={5} className="px-4 py-3 text-right font-semibold">Total</td>
-                    <td className="px-4 py-3 text-right tabular font-bold text-primary">{fmtMoeda(d.valorTotal)}</td>
+                    <td colSpan={4} className="px-4 pt-3 text-right">Diárias</td>
+                    <td className="px-4 pt-3 text-right tabular">{fmtMoeda(d.valorDiarias)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={4} className="px-4 text-right">Passagens aéreas</td>
+                    <td className="px-4 text-right tabular">{fmtMoeda(d.valorPassagens)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={4} className="px-4 pb-3 text-right font-semibold">Total de diárias e passagens</td>
+                    <td className="px-4 pb-3 text-right tabular font-bold text-primary">{fmtMoeda(d.valorTotal)}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -202,26 +213,20 @@ export default function DiariaDetalhe() {
       </div>
 
       <Modal
-        aberto={!!acao}
-        titulo={acao === 'rejeitar' ? 'Rejeitar diária' : 'Cancelar diária'}
-        onFechar={() => setAcao(null)}
+        aberto={excluindo}
+        titulo="Excluir diária"
+        onFechar={() => setExcluindo(false)}
         rodape={<>
-          <button type="button" className="btn-secundario" onClick={() => setAcao(null)}>Voltar</button>
-          <button type="button" className="btn-perigo" disabled={!motivo.trim() || enviando}
-            onClick={() => executar(acao === 'rejeitar' ? 'rejeitar' : 'cancelar', { motivo })}>
-            {acao === 'rejeitar' ? 'Confirmar rejeição' : 'Confirmar cancelamento'}
-          </button>
+          <button type="button" className="btn-secundario" onClick={() => setExcluindo(false)}>Voltar</button>
+          <button type="button" className="btn-perigo" disabled={enviando} onClick={excluir}><Icone nome="delete" /> Excluir definitivamente</button>
         </>}
       >
         <Alerta className="mb-4">{erroAcao}</Alerta>
-        <p className="font-body-md text-body-md text-on-surface-variant mb-4">
-          {acao === 'rejeitar'
-            ? 'As datas ficam liberadas. Quem lançou pode corrigir e reenviar a diária para aprovação.'
-            : 'As datas ficam liberadas para novo lançamento. O registro é mantido no histórico e nos relatórios de canceladas.'}
+        <p className="font-body-md text-body-md">
+          A diária nº {d.id} de <strong>{d.servidor}</strong> ({fmtMoeda(d.valorTotal)}) será excluída e as datas ficam liberadas para novo lançamento.
+          {d.origem === 'LEGADO' ? ' Ela também não volta numa nova migração do sistema antigo.' : ''}
         </p>
-        <Campo rotulo="Motivo *">
-          <textarea className="campo min-h-[90px]" maxLength={500} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
-        </Campo>
+        <p className="font-label-md text-label-md text-on-surface-variant mt-3">Todos os dados excluídos ficam registrados na Auditoria.</p>
       </Modal>
     </>
   );

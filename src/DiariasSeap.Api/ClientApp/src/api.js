@@ -37,7 +37,9 @@ function montarUrl(path, params) {
   if (!params) return path;
   const qs = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && v !== '') qs.append(k, v);
+    // Listas vão repetidas (?unidadeIds=1&unidadeIds=2), como o ASP.NET espera.
+    if (Array.isArray(v)) v.forEach((x) => qs.append(k, x));
+    else if (v !== undefined && v !== null && v !== '') qs.append(k, v);
   });
   const s = qs.toString();
   return s ? `${path}?${s}` : path;

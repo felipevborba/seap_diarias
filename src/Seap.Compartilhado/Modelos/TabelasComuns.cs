@@ -32,10 +32,15 @@ public class Servidor : IAuditavel
     public string Nome { get; set; } = null!;
     /// <summary>Obrigatório para cadastros do sistema; nulo apenas em servidores migrados de legado sem CPF.</summary>
     public string? Cpf { get; set; }
+    /// <summary>Matrícula nova (formato SAD "1234567/01", a do sistema legado de diárias).</summary>
     public string? Matricula { get; set; }
+    /// <summary>Matrícula antiga (a do cadastro de policiais da Carteira); usada na busca.</summary>
+    public string? MatriculaAntiga { get; set; }
     public Vinculo Vinculo { get; set; }
     public int? CargoId { get; set; }
     public int? UnidadeId { get; set; }
+    /// <summary>Lotação alterada nas Diárias: a sincronização com a Carteira não a sobrescreve.</summary>
+    public bool LotacaoManual { get; set; }
     public int? PoliciaPenalId { get; set; }
     public string? Email { get; set; }
     public string? Celular { get; set; }

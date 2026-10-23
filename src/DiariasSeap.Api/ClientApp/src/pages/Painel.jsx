@@ -9,7 +9,7 @@ import { FiltroPeriodo, periodoParaFiltro } from '../components/ui/FiltroPeriodo
 import { fmtMoeda, fmtNumero } from '../lib/formato';
 
 export default function Painel() {
-  const [periodo, setPeriodo] = useState({ preset: 'ano', base: 'diaria', de: '', ate: '' });
+  const [periodo, setPeriodo] = useState({ preset: 'ano', base: 'diaria', de: '', ate: '', ano: '', mes: '' });
   const filtro = useMemo(() => periodoParaFiltro(periodo), [periodo]);
   const chave = JSON.stringify(filtro);
   const [d, setD] = useState(null);
@@ -31,7 +31,7 @@ export default function Painel() {
     <>
       <CabecalhoPagina
         titulo="Painel de diárias"
-        subtitulo={`Custos e volume por mês, região, tipo, destino, origem e lotação, pela ${rotuloBase}. Diárias canceladas e rejeitadas não entram.`}
+        subtitulo={`Custos e volume por mês, região, tipo, destino, origem e lotação, pela ${rotuloBase}, com o percentual de cada item no total do período.`}
         acoes={
           <Permitido perfis={['ADMIN', 'OPERADOR']}>
             <Link to="/diarias/nova" className="btn-primario"><Icone nome="add" /> Lançar diária</Link>
@@ -42,8 +42,10 @@ export default function Painel() {
       <Alerta className="mb-4">{erro}</Alerta>
       {!d ? <Carregando /> : (
         <div className="flex flex-col gap-gutter-grid">
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-gutter-grid">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-gutter-grid">
             <Indicador destaque rotulo="Gasto com diárias no período" valor={fmtMoeda(d.totais.valorTotal)} />
+            <Indicador rotulo="Passagens aéreas" valor={fmtMoeda(d.valorPassagens)}
+              detalhe={d.passagens ? `${fmtNumero(d.passagens)} passage${d.passagens > 1 ? 'ns' : 'm'} · total geral ${fmtMoeda(d.totais.valorTotal + d.valorPassagens)}` : 'Nenhuma no período'} />
             <Indicador rotulo="Lançamentos" valor={fmtNumero(d.totais.diarias)} />
             <Indicador rotulo="Servidores atendidos" valor={fmtNumero(d.totais.servidores)} />
             <Indicador rotulo="Quantidade de diárias" valor={fmtNumero(d.totais.quantidade)}
@@ -52,18 +54,18 @@ export default function Painel() {
           <section className="cartao p-padding-card">
             <h3 className="font-body-lg text-body-lg font-semibold">Gasto por {serie?.granularidade === 'ano' ? 'ano' : 'mês'}</h3>
             <p className="font-label-md text-label-md text-on-surface-variant mb-4">
-              Pela {rotuloBase}. Clique numa coluna para ver só aquele {serie?.granularidade === 'ano' ? 'ano' : 'mês'}.
+              Pela {rotuloBase}, com o percentual de cada {serie?.granularidade === 'ano' ? 'ano' : 'mês'} no total. Clique numa coluna para ver só aquele {serie?.granularidade === 'ano' ? 'ano' : 'mês'}.
             </p>
             {!serie ? <Carregando /> : (
-              <ColunasSerie pontos={serie.pontos} onSelecionar={(p) => setPeriodo({ ...periodo, preset: 'custom', de: p.inicio, ate: p.fim })} />
+              <ColunasSerie mostrarPercentual pontos={serie.pontos} onSelecionar={(p) => setPeriodo({ ...periodo, preset: 'custom', de: p.inicio, ate: p.fim })} />
             )}
           </section>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-gutter-grid">
-            <BarrasHorizontais titulo="Gasto por região" subtitulo="Região do município de destino" dados={d.porRegiao} />
-            <BarrasHorizontais titulo="Gasto por tipo de diária" dados={d.porTipo} />
-            <BarrasHorizontais titulo="10 destinos com maior gasto" dados={d.porDestino} />
-            <BarrasHorizontais titulo="10 cidades de origem com maior gasto" dados={d.porOrigem} />
-            <BarrasHorizontais titulo="10 lotações com maior gasto" dados={d.porUnidade} />
+            <BarrasHorizontais titulo="Gasto por região" subtitulo="Região do município de destino" dados={d.porRegiao} total={d.totais.valorTotal} />
+            <BarrasHorizontais titulo="Gasto por tipo de diária" dados={d.porTipo} total={d.totais.valorTotal} />
+            <BarrasHorizontais titulo="10 destinos com maior gasto" dados={d.porDestino} total={d.totais.valorTotal} />
+            <BarrasHorizontais titulo="10 cidades de origem com maior gasto" dados={d.porOrigem} total={d.totais.valorTotal} />
+            <BarrasHorizontais titulo="10 lotações com maior gasto" dados={d.porUnidade} total={d.totais.valorTotal} />
           </div>
         </div>
       )}

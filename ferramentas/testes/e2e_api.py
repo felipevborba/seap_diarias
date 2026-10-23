@@ -35,78 +35,134 @@ s,m=call("GET","/api/localidades/municipios?busca=caruaru",tok=T); car=m["data"]
 s,m=call("GET","/api/localidades/municipios?busca=petrol",tok=T); pet=m["data"][0]["id"]
 s,m=call("GET","/api/localidades/municipios?busca=recife",tok=T); rec=m["data"][0]["id"]
 
-per=lambda ini,fim,dest,itens,id=None: {"id":id,"dataInicio":ini,"dataFim":fim,"destinoMunicipioId":dest,"itens":itens}
+per=lambda ini,fim,dest,itens,id=None,orig=None,pas=None: {"id":id,"dataInicio":ini,"dataFim":fim,"destinoMunicipioId":dest,"itens":itens,
+    "origemMunicipioId":orig if orig is not None else rec,"passagem":pas}
 it=lambda tipo,q=None,id=None: {"id":id,"tipoDiariaId":tipo,"quantidade":q}
-s,r=call("POST","/api/diarias/simular",{"servidorId":serv["id"],"objetivo":"x","processoSei":None,"observacao":None,"periodos":[]},tok=T)
-s,r=call("POST","/api/diarias",{"servidorId":serv["id"],"objetivo":"Sem origem","processoSei":None,"observacao":None,"periodos":[{"id":None,"dataInicio":"2026-03-01","dataFim":"2026-03-01","destinoMunicipioId":car,"itens":[{"id":None,"tipoDiariaId":I,"quantidade":None}]}]},tok=T)
-ok("cidade de origem obrigatoria", not r["success"] and "origem" in r["message"], r["message"])
-req={"servidorId":serv["id"],"origemMunicipioId":rec,"objetivo":"Escolta","processoSei":"1/2026","observacao":None,"periodos":[
-    per("2026-10-05","2026-10-07",car,[it(I,2),it(P,1)]), per("2026-10-10","2026-10-15",pet,[it(I)])]}
+pasg=lambda ida,volta,ag="GOL",**k: {"agencia":ag,"categoria":"ECONÔMICA","dataIda":None,"dataVolta":None,"valorIda":ida,"valorVolta":volta,**k}
+s,r=call("POST","/api/diarias",{"servidorId":serv["id"],"objetivo":"Sem origem","processoSei":None,"observacao":None,"periodos":[per("2026-03-01","2026-03-01",car,[it(I)],orig=0)]},tok=T)
+ok("cidade de origem obrigatoria (por periodo)", not r["success"] and "origem" in r["message"], r["message"])
+req={"servidorId":serv["id"],"objetivo":"Escolta","processoSei":"1/2026","observacao":"CI 98","periodos":[
+    per("2026-10-05","2026-10-07",car,[it(I,2),it(P,1)]), per("2026-10-10","2026-10-15",pet,[it(I)],orig=car)]}
 s,r=call("POST","/api/diarias/simular",req,tok=T)
-ok("simulacao: 2x177 + 1x88,50 + 6x177 = 1504,50", r["data"]["valorTotal"]==1504.5, str(r["data"]["valorTotal"]))
+ok("simulacao: 2x177 + 1x88,50 + 6x177 = 1504,50", r["data"]["valorTotal"]==1504.5 and r["data"]["valorDiarias"]==1504.5 and r["data"]["valorPassagens"]==0, str(r["data"]["valorTotal"]))
 s,r=call("POST","/api/diarias",req,tok=T); d1=r["data"]; ok("lanca diaria com itens", r["success"], r["message"])
 s,r=call("GET",f"/api/diarias/{d1}",tok=T); det=r["data"]
-ok("nova diaria entra PENDENTE", det["situacao"]=="PENDENTE")
+ok("nova diaria ja entra APROVADA (sem etapa de aprovacao)", det["situacao"]=="APROVADA", det["situacao"])
 ok("periodo 1 com 2 itens", len(det["periodos"][0]["itens"])==2)
+ok("origem por periodo", det["periodos"][0]["origemMunicipioId"]==rec and det["periodos"][1]["origemMunicipioId"]==car and "Recife" in det["periodos"][0]["origem"], det["periodos"][1]["origem"])
 s,r=call("POST","/api/diarias",{**req,"periodos":[per("2026-10-14","2026-10-16",car,[it(P,1)])]},tok=T)
 ok("conflito de datas bloqueado", not r["success"], r["message"][:80])
 s,r=call("POST","/api/diarias/simular",{**req,"servidorId":contratado,"periodos":[per("2026-11-01","2026-11-03",car,[it(I,3),it(P,1)])]},tok=T)
 ok("soma de quantidades > dias bloqueada", any("excede" in e for e in r["data"]["erros"]))
 s,r=call("POST","/api/diarias/simular",{**req,"servidorId":contratado,"periodos":[per("2026-11-01","2026-11-03",car,[it(I,1),it(I,1)])]},tok=T)
 ok("tipo repetido bloqueado", any("repetido" in e for e in r["data"]["erros"]))
-s,r=call("POST",f"/api/diarias/{d1}/aprovar",tok=T); ok("quem lancou nao aprova", not r["success"], r["message"])
+s,r=call("POST",f"/api/diarias/{d1}/aprovar",tok=T); ok("rota de aprovacao nao existe mais", s in (404,405), str(s))
+s,r=call("POST",f"/api/diarias/{d1}/cancelar",{"motivo":"x"},tok=T); ok("rota de cancelamento nao existe mais", s in (404,405), str(s))
 s,u=call("GET","/api/usuarios?somenteComAcesso=false",tok=T); outro=[x for x in u["data"]["items"] if not x["administradorGeral"]][0]
-call("PUT",f"/api/usuarios/{outro['id']}/perfil",{"perfil":"ADMIN"},tok=T)
-s,r=login(A2); T2=r["data"]["token"]
-s,r=call("POST",f"/api/diarias/{d1}/aprovar",tok=T2); ok("outro admin aprova", r["success"], r["message"])
-s,r=call("POST",f"/api/diarias/{d1}/rejeitar",{"motivo":"x"},tok=T2); ok("aprovada nao pode ser rejeitada", not r["success"])
 call("PUT",f"/api/cadastros/valores/{vInt}",{"tipoDiariaId":I,"vinculo":None,"cargoId":None,"valor":177,"vigenciaInicio":"2026-01-01","vigenciaFim":"2026-09-30"},tok=T)
 call("POST","/api/cadastros/valores",{"tipoDiariaId":I,"vinculo":None,"cargoId":None,"valor":200,"vigenciaInicio":"2026-10-01","vigenciaFim":None},tok=T)
-s,r=call("GET",f"/api/diarias/{d1}",tok=T); det=r["data"]
 ed={**req,"objetivo":"Escolta (ajustada)","periodos":[per(p["dataInicio"],p["dataFim"],p["destinoMunicipioId"],
-    [it(i["tipoDiariaId"],i["quantidade"],i["id"]) for i in p["itens"]],p["id"]) for p in det["periodos"]]}
+    [it(i["tipoDiariaId"],i["quantidade"],i["id"]) for i in p["itens"]],p["id"],orig=p["origemMunicipioId"]) for p in det["periodos"]]}
 s,r=call("PUT",f"/api/diarias/{d1}",ed,tok=T); ok("edicao", r["success"], r["message"])
 s,r=call("GET",f"/api/diarias/{d1}",tok=T)
 ok("edicao mantem valores gravados apesar do reajuste", r["data"]["valorTotal"]==1504.5, str(r["data"]["valorTotal"]))
-ok("edicao devolve para PENDENTE", r["data"]["situacao"]=="PENDENTE")
+ok("edicao continua APROVADA", r["data"]["situacao"]=="APROVADA")
 s,r=call("PUT",f"/api/diarias/{d1}",{**ed,"periodos":ed["periodos"]+[per("2026-10-20","2026-10-20",car,[it(I)])]},tok=T)
 s,r=call("GET",f"/api/diarias/{d1}",tok=T); ok("periodo novo usa valor reajustado", r["data"]["valorTotal"]==1704.5, str(r["data"]["valorTotal"]))
-s,r=call("POST",f"/api/diarias/{d1}/rejeitar",{"motivo":"Falta portaria"},tok=T2); ok("rejeicao com motivo", r["success"])
-s,r=call("POST","/api/diarias",{**req,"periodos":[per("2026-10-14","2026-10-16",car,[it(P,1)])]},tok=T)
-ok("rejeitada libera as datas", r["success"], r["message"]); d2=r["data"]
-s,r=call("POST",f"/api/diarias/{d2}/cancelar",{"motivo":"desistiu"},tok=T); ok("cancelamento", r["success"])
-s,r=call("GET","/api/relatorios?dataInicio=2026-10-01&dataFim=2026-10-31&situacao=TODAS",tok=T); ok("relatorio todas", r["data"]["linhas"]["totalItems"]==5)
-s,x=call("GET","/api/relatorios/exportar?situacao=TODAS",tok=T,raw=True); ok("xlsx", s==200 and x[:2]==b"PK")
-s,r=call("GET","/api/relatorios/dashboard?ano=2026",tok=T); ok("dashboard", r["success"])
+# passagens aereas (campos proprios, ANEXO 2 do legado)
+reqPa={**req,"servidorId":contratado,"objetivo":"Curso em Brasília","periodos":[per("2026-12-01","2026-12-03",car,[it(I)],pas=pasg(968.78,968.77))]}
+s,r=call("POST","/api/diarias/simular",reqPa,tok=T)
+ok("passagem: diarias 3x150 + passagem 968,78+968,77", r["data"]["valorDiarias"]==450 and r["data"]["valorPassagens"]==1937.55 and r["data"]["valorTotal"]==2387.55 and not r["data"]["erros"],
+   f'{r["data"]["valorDiarias"]} {r["data"]["valorPassagens"]} {r["data"]["erros"]}')
+s,r=call("POST","/api/diarias/simular",{**reqPa,"periodos":[per("2026-12-01","2026-12-03",car,[it(I)],pas=pasg(100,0,ag=""))]},tok=T)
+ok("passagem sem agencia bloqueada", any("agência" in e for e in r["data"]["erros"]), str(r["data"]["erros"]))
+s,r=call("POST","/api/diarias/simular",{**reqPa,"periodos":[per("2026-12-01","2026-12-03",car,[it(I)],pas=pasg(0,0))]},tok=T)
+ok("passagem sem valor bloqueada", any("valor da passagem" in e for e in r["data"]["erros"]), str(r["data"]["erros"]))
+s,r=call("POST","/api/diarias/simular",{**reqPa,"periodos":[per("2026-12-01","2026-12-03",car,[])]},tok=T)
+ok("periodo sem diaria e sem passagem bloqueado", any("passagem" in e for e in r["data"]["erros"]), str(r["data"]["erros"]))
+s,r=call("POST","/api/diarias",reqPa,tok=T); dpa=r["data"]; ok("lanca diaria com passagem", r["success"], r["message"])
+s,r=call("GET",f"/api/diarias/{dpa}",tok=T); pz=r["data"]["periodos"][0]["passagem"]
+ok("passagem gravada (data de ida = inicio do periodo)", pz and pz["agencia"]=="GOL" and pz["valorTotal"]==1937.55 and pz["dataIda"]=="2026-12-01" and r["data"]["valorPassagens"]==1937.55 and r["data"]["valorTotal"]==2387.55, str(pz))
+s,r=call("POST","/api/diarias",{**reqPa,"objetivo":"So passagem","periodos":[per("2026-12-10","2026-12-10",car,[],pas=pasg(500,0))]},tok=T)
+dso=r["data"]; ok("periodo so com passagem", r["success"], r["message"])
+ed2={**reqPa,"periodos":[per("2026-12-01","2026-12-03",car,[it(I,None,r2["id"]) for r2 in call("GET",f"/api/diarias/{dpa}",tok=T)[1]["data"]["periodos"][0]["itens"]],
+     call("GET",f"/api/diarias/{dpa}",tok=T)[1]["data"]["periodos"][0]["id"])]}
+s,r=call("PUT",f"/api/diarias/{dpa}",ed2,tok=T); s,r=call("GET",f"/api/diarias/{dpa}",tok=T)
+ok("remover passagem na edicao", r["data"]["periodos"][0]["passagem"] is None and r["data"]["valorPassagens"]==0 and r["data"]["valorTotal"]==450, str(r["data"]["valorTotal"]))
+s,r=call("PUT",f"/api/diarias/{dpa}",reqPa|{"periodos":[{**ed2["periodos"][0],"passagem":pasg(968.78,968.77)}]},tok=T)
+s,r=call("GET",f"/api/relatorios/dashboard?situacao=VIGENTES&dataInicio=2026-12-01&dataFim=2026-12-31",tok=T)
+ok("painel soma passagens a parte", r["data"]["valorPassagens"]==2437.55 and r["data"]["passagens"]==2 and r["data"]["totais"]["valorTotal"]==450, f'{r["data"]["valorPassagens"]} {r["data"]["totais"]}')
+# exclusao (substitui o cancelamento)
+s,r=call("POST","/api/diarias",{**req,"periodos":[per("2026-10-25","2026-10-26",car,[it(P,1)])]},tok=T); d2=r["data"]; ok("lanca para excluir", r["success"], r["message"])
+s,r=call("DELETE",f"/api/diarias/{d2}",tok=T); ok("exclui diaria", r["success"], r["message"])
+s,r=call("GET",f"/api/diarias/{d2}",tok=T); ok("diaria excluida some", s==404)
+s,r=call("GET",f"/api/relatorios/auditoria?entidade=diaria",tok=T); ok("auditoria guarda a exclusao", any(a["acao"]=="EXCLUSAO" and a["entidadeId"]==str(d2) for a in r["data"]["items"]))
+s,r=call("POST","/api/diarias",{**req,"periodos":[per("2026-10-25","2026-10-26",car,[it(P,1)])]},tok=T); ok("exclusao libera as datas", r["success"], r["message"]); d3=r["data"]
+s,r=call("GET","/api/relatorios?dataInicio=2026-10-01&dataFim=2026-10-31&situacao=TODAS",tok=T); ok("relatorio do mes", r["data"]["linhas"]["totalItems"]==5, str(r["data"]["linhas"]["totalItems"]))
+s,x=call("GET","/api/relatorios/exportar?situacao=TODAS",tok=T,raw=True); ok("planilha detalhada", s==200 and x[:2]==b"PK")
+s,r=call("GET","/api/relatorios/dashboard",tok=T); ok("dashboard", r["success"])
 call("PUT",f"/api/usuarios/{outro['id']}/perfil",{"perfil":"CONSULTA"},tok=T)
-s,r=login(A2); s,r=call("POST",f"/api/diarias/{d1}/aprovar",tok=r["data"]["token"]); ok("consulta nao aprova (403)", s==403)
+s,r=login(A2); s,r=call("DELETE",f"/api/diarias/{d3}",tok=r["data"]["token"]); ok("consulta nao exclui (403)", s==403)
+
+# ---- mapa da controladoria (ANEXO VII) ----
+import io, openpyxl
+hoje=__import__("datetime").date.today()
+ini=hoje.replace(day=1).isoformat(); fim=(hoje.replace(day=28)+__import__("datetime").timedelta(days=4)).replace(day=1)-__import__("datetime").timedelta(days=1)
+s,x=call("GET",f"/api/relatorios/mapa-controladoria?cadastroInicio={ini}&cadastroFim={fim.isoformat()}",tok=T,raw=True)
+ok("mapa xlsx", s==200 and x[:2]==b"PK", str(s))
+wb=openpyxl.load_workbook(io.BytesIO(x)); ws=wb.worksheets[0]
+meses=["JANEIRO","FEVEREIRO","MARÇO","ABRIL","MAIO","JUNHO","JULHO","AGOSTO","SETEMBRO","OUTUBRO","NOVEMBRO","DEZEMBRO"]
+ok("mapa: aba com o mes", ws.title==f"{hoje.year} - {meses[hoje.month-1]}", ws.title)
+ok("mapa: cabecalho do ANEXO VII", "ANEXO VII - MAPA DE DIÁRIAS E PASSAGENS" in (ws["B3"].value or "") and ws["C6"].value.startswith("NOME DO FAVORECIDO") and wb.sheetnames[1].startswith("Decreto"))
+ok("mapa: logo preservado", len(ws._images)==1)
+linhas=[[c.value for c in row] for row in ws.iter_rows(min_row=8) if row[2].value]
+# d1: 3 periodos (2 itens no primeiro), dpa: 1 com passagem, dso: so passagem, d3: 1 parcial = 6 linhas
+ok("mapa: uma linha por periodo", len(linhas)==6, str(len(linhas)))
+l1=next(l for l in linhas if l[12].date().isoformat()=="2026-10-05")
+ok("mapa: integrais e parciais na mesma linha", l1[0]=="SEAP" and l1[19]==2 and l1[20]==177 and l1[21]==1 and l1[22]==88.5 and l1[23]==3, str(l1[19:24]))
+ok("mapa: origem/destino no formato do legado", l1[8]=="Pernambuco" and l1[9]=="RECIFE - PE" and l1[11].startswith("CARUARU - PE"), f"{l1[8]} {l1[9]} {l1[11]}")
+ok("mapa: formulas nas celulas cinzas", str(l1[18]).startswith("=Q") and str(l1[24]).startswith("=(T") and str(l1[25]).startswith("=S"), f"{l1[18]} {l1[24]} {l1[25]}")
+ok("mapa: SEI, CPF e observacao", l1[26]=="1/2026" and len(l1[27])==14 and l1[28]=="CI 98", f"{l1[26]} {l1[27]} {l1[28]}")
+lp=next(l for l in linhas if l[12].date().isoformat()=="2026-12-01")
+ok("mapa: passagem nas colunas O-R", lp[14]=="GOL" and lp[15]=="ECONÔMICA" and lp[16]==968.78 and lp[17]==968.77, str(lp[14:18]))
+s,x=call("GET","/api/relatorios/mapa-controladoria?cadastroInicio=2020-01-01&cadastroFim=2020-01-31",tok=T,raw=True)
+ws0=openpyxl.load_workbook(io.BytesIO(x)).worksheets[0]; ok("mapa vazio informa expressamente", "NÃO HOUVE" in (ws0["C8"].value or ""))
+
+# ---- cargos: exclusao com substituto ----
+s,r=call("POST","/api/cadastros/cargos",{"nome":"AGENTE SEG PENITENCIARIA","ativo":True},tok=T); ca=r["data"]
+s,r=call("POST","/api/cadastros/cargos",{"nome":"AGENTE DE SEGURANCA PENITENCIARIA","ativo":True},tok=T); cb=r["data"]
+s,sv=call("GET",f"/api/servidores/{contratado}",tok=T); sv=sv["data"]
+call("PUT",f"/api/servidores/{contratado}",{**sv,"cargoId":ca},tok=T)
+s,r=call("DELETE",f"/api/cadastros/cargos/{ca}",tok=T); ok("cargo em uso pede substituto", not r["success"] and "substitu" in r["message"], r["message"][:90])
+s,r=call("DELETE",f"/api/cadastros/cargos/{ca}?substitutoId={cb}",tok=T); ok("exclui cargo passando para o substituto", r["success"], r["message"])
+s,sv=call("GET",f"/api/servidores/{contratado}",tok=T); ok("servidor passou para o cargo substituto", sv["data"]["cargoId"]==cb)
+s,r=call("DELETE",f"/api/cadastros/cargos/{cb}?substitutoId={cb}",tok=T); ok("substituto igual ao excluido bloqueado", not r["success"])
+# ---- servidor policial: matricula e lotacao editaveis, sincronizacao nao desfaz ----
+pol=next(x for x in call("GET","/api/servidores?ativo=true&pageSize=50",tok=T)[1]["data"]["items"] if x["policialPenal"])
+s,sp=call("GET",f"/api/servidores/{pol['id']}",tok=T); sp=sp["data"]
+outra=next(u for u in call("GET","/api/cadastros/lotacoes",tok=T)[1]["data"] if u["id"]!=sp["unidadeId"])
+s,r=call("PUT",f"/api/servidores/{pol['id']}",{**sp,"matricula":"1234567/01","unidadeId":outra["id"]},tok=T); ok("edita matricula e lotacao de policial", r["success"], r.get("message"))
+call("POST","/api/servidores/sincronizar-policiais",tok=T)
+s,sp2=call("GET",f"/api/servidores/{pol['id']}",tok=T); sp2=sp2["data"]
+ok("sincronizacao nao desfaz matricula nova nem lotacao manual", sp2["matricula"]=="1234567/01" and sp2["unidadeId"]==outra["id"] and sp2["lotacaoManual"] and sp2["matriculaAntiga"], str(sp2))
+s,r=call("GET",f"/api/servidores?busca={sp2['matriculaAntiga']}",tok=T); ok("busca pela matricula antiga", r["data"]["totalItems"]>=1)
+s,r=call("GET","/api/relatorios?situacao=TODAS&servidor=1/2026",tok=T); ok("busca por processo SEI no relatorio", r["data"]["linhas"]["totalItems"]>=5, str(r["data"]["linhas"]["totalItems"]))
+u1=call("GET","/api/cadastros/lotacoes",tok=T)[1]["data"][:2]
+s,r=call("GET",f"/api/relatorios?situacao=TODAS&unidadeIds={u1[0]['id']}&unidadeIds={u1[1]['id']}",tok=T); ok("filtro por varias lotacoes", r["success"], r.get("message"))
 
 # ---- feedback da apresentação ----
-s,r=call("GET",f"/api/diarias/{d1}",tok=T); ok("detalhe traz cidade de origem", r["data"]["cidadeOrigemId"]==rec and "Recife" in r["data"]["cidadeOrigem"], r["data"]["cidadeOrigem"])
-hoje=__import__("datetime").date.today().isoformat()
-s,r=call("GET",f"/api/relatorios?situacao=TODAS&cadastroInicio={hoje}&cadastroFim={hoje}",tok=T); ok("filtro data do cadastro (hoje)", r["data"]["linhas"]["totalItems"]==5, str(r["data"]["linhas"]["totalItems"]))
+hoje=hoje.isoformat()
+s,r=call("GET",f"/api/relatorios?situacao=TODAS&cadastroInicio={hoje}&cadastroFim={hoje}",tok=T); ok("filtro data do cadastro (hoje)", r["data"]["linhas"]["totalItems"]==6, str(r["data"]["linhas"]["totalItems"]))
 s,r=call("GET","/api/relatorios?situacao=TODAS&cadastroInicio=2020-01-01&cadastroFim=2020-12-31",tok=T); ok("filtro data do cadastro (fora)", r["data"]["linhas"]["totalItems"]==0)
-s,r=call("GET",f"/api/relatorios?situacao=TODAS&cidadeOrigemId={rec}",tok=T); ok("filtro cidade de origem", r["data"]["linhas"]["totalItems"]==5 and r["data"]["linhas"]["items"][0]["cidadeOrigem"].startswith("Recife"))
-s,r=call("GET",f"/api/relatorios?situacao=TODAS&cidadeOrigemId={car}",tok=T); ok("filtro cidade de origem (outra)", r["data"]["linhas"]["totalItems"]==0)
+s,r=call("GET",f"/api/relatorios?situacao=TODAS&cidadeOrigemId={car}",tok=T); ok("filtro cidade de origem (por periodo)", r["data"]["linhas"]["totalItems"]==1 and r["data"]["linhas"]["items"][0]["cidadeOrigem"].startswith("Caruaru"), str(r["data"]["linhas"]["totalItems"]))
 s,x=call("GET",f"/api/relatorios/exportar?situacao=TODAS&cadastroInicio={hoje}&cidadeOrigemId={rec}",tok=T,raw=True); ok("exportacao com filtros novos", s==200 and x[:2]==b"PK")
-s,r=call("GET",f"/api/relatorios/dashboard?situacao=VIGENTES&cadastroInicio={hoje}&cadastroFim={hoje}",tok=T); ok("dashboard por data do cadastro", r["success"] and "porOrigem" in r["data"])
 s,r=call("GET",f"/api/analises/serie?situacao=TODAS&cadastroInicio={hoje[:8]}01&cadastroFim={hoje}&baseData=cadastro",tok=T); ok("serie por data do cadastro", r["success"] and sum(p["valor"] for p in r["data"]["pontos"])>0)
 s,r=call("GET","/api/analises/ranking/cidadeOrigem?situacao=TODAS",tok=T); ok("analise por cidade de origem", r["success"] and r["data"]["itens"][0]["rotulo"].startswith("Recife"))
 # tipos
-s,r=call("POST","/api/cadastros/tipos",{"nome":"teste","descricao":"testes","ativo":True},tok=T); tteste=r["data"]
+s,r=call("POST","/api/cadastros/tipos",{"nome":"teste","descricao":"testes","ativo":True,"colunaMapa":"PARCIAL"},tok=T); tteste=r["data"]
+s,t=call("GET","/api/cadastros/tipos",tok=T); ok("tipo com coluna do mapa", next(x for x in t["data"] if x["id"]==tteste)["colunaMapa"]=="PARCIAL" and next(x for x in t["data"] if x["id"]==P)["colunaMapa"]=="PARCIAL")
 s,r=call("DELETE",f"/api/cadastros/tipos/{tteste}",tok=T); ok("exclui tipo sem uso", r["success"], r["message"])
 s,r=call("DELETE",f"/api/cadastros/tipos/{I}",tok=T); ok("nao exclui tipo em uso", not r["success"] and "usado" in r["message"], r["message"][:70])
-# passagem aerea: valor livre, sem tabela, nao conta como dia
-s,r=call("POST","/api/cadastros/tipos",{"nome":"Passagem Aérea","descricao":None,"ativo":True,"valorLivre":True},tok=T); PA=r["data"]; ok("cria tipo valor livre", r["success"], r.get("message"))
-reqPa={**req,"servidorId":contratado,"periodos":[per("2026-12-01","2026-12-03",car,[it(I),{"id":None,"tipoDiariaId":PA,"quantidade":None,"valorUnitario":1234.56}])]}
-s,r=call("POST","/api/diarias/simular",reqPa,tok=T)
-ok("passagem: 3x150 (contratado) + 1234,56 digitado", r["data"]["valorTotal"]==1684.56 and not r["data"]["erros"], f'{r["data"]["valorTotal"]} {r["data"]["erros"]}')
-s,r=call("POST","/api/diarias/simular",{**reqPa,"periodos":[per("2026-12-01","2026-12-03",car,[it(I),it(PA)])]},tok=T)
-ok("passagem sem valor bloqueada", any("informe o valor" in e for e in r["data"]["erros"]), str(r["data"]["erros"]))
-s,r=call("POST","/api/diarias",reqPa,tok=T); dpa=r["data"]; ok("lanca diaria com passagem", r["success"], r["message"])
-s,r=call("GET",f"/api/diarias/{dpa}",tok=T); ipa=next(i for i in r["data"]["periodos"][0]["itens"] if i["tipoDiariaId"]==PA)
-ok("passagem gravada com valor livre e qtd 1", ipa["valorLivre"] and ipa["quantidade"]==1 and ipa["valorUnitario"]==1234.56)
-s,r=call("GET",f"/api/relatorios?situacao=TODAS&servidor=Maria%20Contratada",tok=T); ok("passagem nao soma em quantidade de diarias", r["data"]["totais"]["quantidade"]==3 and r["data"]["totais"]["valorTotal"]==1684.56, str(r["data"]["totais"]))
 # lotacoes
 s,r=call("POST","/api/cadastros/lotacoes",{"sigla":"tst","nome":"Unidade de Teste"},tok=T); lid=r["data"]; ok("cria lotacao", r["success"])
 s,r=call("PUT",f"/api/cadastros/lotacoes/{lid}",{"sigla":"TST2","nome":"Unidade de Teste 2"},tok=T); ok("edita lotacao", r["success"])

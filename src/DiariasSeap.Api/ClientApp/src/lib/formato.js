@@ -59,7 +59,7 @@ export const VINCULOS = [
 
 export const PERFIS = [
   { valor: 'ADMIN', rotulo: 'Administrador', descricao: 'Tudo, inclusive usuários, valores e cadastros de apoio' },
-  { valor: 'OPERADOR', rotulo: 'Operador', descricao: 'Lança, edita e cancela diárias; mantém servidores' },
+  { valor: 'OPERADOR', rotulo: 'Operador', descricao: 'Lança, edita e exclui diárias; mantém servidores' },
   { valor: 'CONSULTA', rotulo: 'Consulta', descricao: 'Apenas consulta, relatórios e exportação' },
 ];
 

@@ -19,6 +19,7 @@
   <ItemGroup>
     <!-- Scripts de schema aplicados no start pelo VersionadorSchema (Seap.Compartilhado). -->
     <EmbeddedResource Include="Sql\*.sql" />
+    <EmbeddedResource Include="Recursos\*.xlsx" />
     <!-- Fontes da SPA não vão para o publish; só o build (dist -> wwwroot). -->
     <Content Remove="$(SpaRoot)**" />
     <None Remove="$(SpaRoot)**" />

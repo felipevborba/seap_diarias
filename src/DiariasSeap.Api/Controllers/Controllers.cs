@@ -73,28 +73,12 @@ public class DiariasController : ControllerBase
         return this.Sucesso(id, "Diária atualizada com sucesso.");
     }
 
-    [HttpPost("{id:int}/cancelar")]
+    [HttpDelete("{id:int}")]
     [Authorize(Policy = Politicas.Lancamento)]
-    public async Task<IActionResult> Cancelar(int id, [FromBody] MotivoRequest req)
+    public async Task<IActionResult> Excluir(int id)
     {
-        await _svc.CancelarAsync(id, req.Motivo);
-        return this.Sucesso(id, "Diária cancelada.");
-    }
-
-    [HttpPost("{id:int}/aprovar")]
-    [Authorize(Policy = Politicas.Gestao)]
-    public async Task<IActionResult> Aprovar(int id)
-    {
-        await _svc.AprovarAsync(id);
-        return this.Sucesso(id, "Diária aprovada.");
-    }
-
-    [HttpPost("{id:int}/rejeitar")]
-    [Authorize(Policy = Politicas.Gestao)]
-    public async Task<IActionResult> Rejeitar(int id, [FromBody] MotivoRequest req)
-    {
-        await _svc.RejeitarAsync(id, req.Motivo);
-        return this.Sucesso(id, "Diária rejeitada.");
+        await _svc.ExcluirAsync(id);
+        return this.Sucesso(id, "Diária excluída.");
     }
 }
 
@@ -157,6 +141,14 @@ public class CadastrosController : ControllerBase
     [HttpPut("cargos/{id:int}")]
     [Authorize(Policy = Politicas.Gestao)]
     public async Task<IActionResult> AtualizarCargo(int id, [FromBody] CargoRequest req) => this.Sucesso(await _svc.SalvarCargoAsync(id, req), "Cargo salvo.");
+
+    [HttpDelete("cargos/{id:int}")]
+    [Authorize(Policy = Politicas.Gestao)]
+    public async Task<IActionResult> ExcluirCargo(int id, [FromQuery] int? substitutoId)
+    {
+        var msg = await _svc.ExcluirCargoAsync(id, substitutoId);
+        return this.Sucesso(true, msg);
+    }
 
     [HttpGet("regioes")]
     public async Task<IActionResult> Regioes() => this.Sucesso(await _svc.RegioesAsync());
@@ -272,6 +264,12 @@ public class RelatoriosController : ControllerBase
     public async Task<IActionResult> Exportar([FromQuery] RelatorioFiltro f)
         => File(await _svc.ExportarXlsxAsync(f), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             $"diarias_controladoria_{DateTime.Now:yyyyMMdd_HHmm}.xlsx");
+
+    /// <summary>ANEXO VII - Mapa de Diárias e Passagens (planilha mensal enviada à Controladoria).</summary>
+    [HttpGet("mapa-controladoria")]
+    public async Task<IActionResult> MapaControladoria([FromQuery] RelatorioFiltro f)
+        => File(await _svc.ExportarMapaAsync(f), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"Planilha_de_Diarias_SEAP_{DateTime.Now:yyyyMMdd_HHmm}.xlsx");
 
     [HttpGet("dashboard")]
     public async Task<IActionResult> Dashboard([FromQuery] RelatorioFiltro f) => this.Sucesso(await _svc.DashboardAsync(f));

@@ -10,7 +10,6 @@ const MENU = [
   { para: '/painel', icone: 'dashboard', rotulo: 'Painel' },
   { para: '/diarias', icone: 'flight_takeoff', rotulo: 'Diárias' },
   { para: '/diarias/nova', icone: 'add_circle', rotulo: 'Lançar Diária', perfis: ['ADMIN', 'OPERADOR'] },
-  { para: '/diarias?situacao=PENDENTE', icone: 'pending_actions', rotulo: 'Aprovar Diárias', perfis: ['ADMIN'] },
   { para: '/relatorios', icone: 'monitoring', rotulo: 'Relatórios' },
   { para: '/analises', icone: 'insights', rotulo: 'Análises' },
   { secao: 'Cadastros' },
@@ -35,17 +34,9 @@ export function Permitido({ perfis, children }) {
 
 function Sidebar({ aberta, onFechar }) {
   const perfil = usePerfil();
-  const local = useLocation();
-  // NavLink ignora a query string: "/diarias" e "/diarias?situacao=PENDENTE" são itens distintos do menu.
-  const ativo = (para, isActive) => {
-    const [caminho, query] = para.split('?');
-    if (query) return local.pathname === caminho && local.search === `?${query}`;
-    if (caminho === '/diarias') return local.pathname === '/diarias' && !local.search.includes('situacao=PENDENTE');
-    return isActive;
-  };
-  const classe = (para) => ({ isActive }) =>
+  const classe = () => ({ isActive }) =>
     `rounded-lg mx-2 px-4 py-2.5 flex items-center gap-3 transition-all ${
-      ativo(para, isActive)
+      isActive
         ? 'bg-secondary-container text-on-secondary-container font-bold'
         : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
     }`;

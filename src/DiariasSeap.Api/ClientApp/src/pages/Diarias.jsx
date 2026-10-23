@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import CampoData from '../components/ui/CampoData';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import api from '../api';
 import { Permitido } from '../components/layout/Layout';
-import { Alerta, CabecalhoPagina, Carregando, Icone, Paginacao, Vazio } from '../components/ui';
+import { Alerta, CabecalhoPagina, Carregando, Icone, Modal, Paginacao, Vazio, useAviso } from '../components/ui';
 import { SITUACOES, SeloSituacao } from '../components/ui/Situacao';
 import { fmtCpf, fmtData, fmtMoeda } from '../lib/formato';
 import { useDados, useUnidades } from '../lib/useDados';
@@ -10,20 +11,21 @@ import { useDados, useUnidades } from '../lib/useDados';
 export default function Diarias() {
   const unidades = useUnidades();
   const navigate = useNavigate();
-  const [params] = useSearchParams();
-  const [filtro, setFiltro] = useState({ busca: '', unidadeId: '', dataInicio: '', dataFim: '', situacao: params.get('situacao') || 'VIGENTES', origem: '' });
+  const avisar = useAviso();
+  const [filtro, setFiltro] = useState({ busca: '', unidadeId: '', dataInicio: '', dataFim: '', situacao: 'VIGENTES', origem: '' });
   const [aplicado, setAplicado] = useState(filtro);
-
-  // O menu "Aprovar Diárias" abre esta mesma tela com ?situacao=PENDENTE.
-  useEffect(() => {
-    const situacao = params.get('situacao');
-    if (!situacao) return;
-    setFiltro((f) => ({ ...f, situacao }));
-    setAplicado((f) => ({ ...f, situacao }));
-    setPagina(1);
-  }, [params]);
   const [pagina, setPagina] = useState(1);
-  const { dados, carregando, erro } = useDados('/api/diarias', { ...aplicado, page: pagina, pageSize: 20 });
+  const { dados, carregando, erro, recarregar } = useDados('/api/diarias', { ...aplicado, page: pagina, pageSize: 20 });
+  const [excluir, setExcluir] = useState(null);
+  const [excluindo, setExcluindo] = useState(false);
+
+  const confirmarExclusao = async () => {
+    setExcluindo(true);
+    const r = await api.del(`/api/diarias/${excluir.id}`);
+    setExcluindo(false);
+    avisar(r.message, r.success ? 'sucesso' : 'erro');
+    if (r.success) { setExcluir(null); recarregar(); }
+  };
 
   const set = (k) => (e) => setFiltro({ ...filtro, [k]: e.target.value });
   const aplicar = (e) => { e.preventDefault(); setAplicado(filtro); setPagina(1); };
@@ -34,16 +36,9 @@ export default function Diarias() {
         titulo="Diárias"
         subtitulo="Lançamentos por servidor, com um ou mais períodos."
         acoes={
-          <>
-            <Permitido perfis={['ADMIN']}>
-              <button type="button" className="btn-secundario" onClick={() => { const f = { ...filtro, situacao: 'PENDENTE' }; setFiltro(f); setAplicado(f); setPagina(1); }}>
-                <Icone nome="pending_actions" /> Aguardando aprovação
-              </button>
-            </Permitido>
-            <Permitido perfis={['ADMIN', 'OPERADOR']}>
-              <Link to="/diarias/nova" className="btn-primario"><Icone nome="add" /> Lançar diária</Link>
-            </Permitido>
-          </>
+          <Permitido perfis={['ADMIN', 'OPERADOR']}>
+            <Link to="/diarias/nova" className="btn-primario"><Icone nome="add" /> Lançar diária</Link>
+          </Permitido>
         }
       />
 
@@ -95,7 +90,7 @@ export default function Diarias() {
                 <thead>
                   <tr>
                     <th>Nº</th><th>Servidor</th><th>Lotação</th><th>Período</th><th>Destino(s)</th>
-                    <th className="text-right">Valor</th><th>Situação</th>
+                    <th className="text-right">Valor</th><th>Situação</th><Permitido perfis={['ADMIN', 'OPERADOR']}><th /></Permitido>
                   </tr>
                 </thead>
                 <tbody>
@@ -117,6 +112,14 @@ export default function Diarias() {
                       <td>{d.destinos}</td>
                       <td className="text-right tabular font-semibold whitespace-nowrap">{fmtMoeda(d.valorTotal)}</td>
                       <td><SeloSituacao situacao={d.situacao} /></td>
+                      <Permitido perfis={['ADMIN', 'OPERADOR']}>
+                        <td className="text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <Link to={`/diarias/${d.id}/editar`} className="btn-icone" aria-label={`Editar diária ${d.id}`} title="Editar"><Icone nome="edit" /></Link>
+                          <button type="button" className="btn-icone hover:!text-error" aria-label={`Excluir diária ${d.id}`} title="Excluir" onClick={() => setExcluir(d)}>
+                            <Icone nome="delete" />
+                          </button>
+                        </td>
+                      </Permitido>
                     </tr>
                   ))}
                 </tbody>
@@ -126,6 +129,20 @@ export default function Diarias() {
           </>
         )}
       </div>
+
+      <Modal aberto={!!excluir} titulo="Excluir diária" onFechar={() => setExcluir(null)}
+        rodape={<><button type="button" className="btn-secundario" onClick={() => setExcluir(null)}>Voltar</button>
+          <button type="button" className="btn-perigo" disabled={excluindo} onClick={confirmarExclusao}><Icone nome="delete" /> Excluir definitivamente</button></>}>
+        {excluir && (
+          <>
+            <p className="font-body-md text-body-md">
+              A diária nº {excluir.id} de <strong>{excluir.servidor}</strong> ({fmtData(excluir.inicio)} a {fmtData(excluir.fim)}, {fmtMoeda(excluir.valorTotal)})
+              será excluída e as datas ficam liberadas para novo lançamento.
+            </p>
+            <p className="font-label-md text-label-md text-on-surface-variant mt-3">Todos os dados excluídos ficam registrados na Auditoria.</p>
+          </>
+        )}
+      </Modal>
     </>
   );
 }

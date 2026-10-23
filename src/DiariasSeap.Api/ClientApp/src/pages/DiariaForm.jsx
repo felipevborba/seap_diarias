@@ -7,26 +7,56 @@ import { SeletorMunicipio, SeletorServidor } from '../components/ui/Seletores';
 import { diasEntre, fmtData, fmtMoeda, fmtNumero } from '../lib/formato';
 import { useTipos } from '../lib/useDados';
 
+export const ORGAO = 'SEAP - Secretaria de Administração Penitenciária';
+// Decreto nº 38.560/2012, art. 4º: passagens na categoria econômica, salvo exceções (Governador, Secretários).
+const CATEGORIAS = ['ECONÔMICA', 'EXECUTIVA', 'PRIMEIRA CLASSE'];
+
 let chaveSeq = 0;
-const novoItem = (tipoDiariaId = '') => ({ chave: ++chaveSeq, id: null, tipoDiariaId, quantidade: '', valor: '' });
+const novoItem = (tipoDiariaId = '') => ({ chave: ++chaveSeq, id: null, tipoDiariaId, quantidade: '' });
+const novaPassagem = (p) => ({ agencia: '', categoria: CATEGORIAS[0], dataIda: p.dataInicio || '', dataVolta: p.dataFim || '', valorIda: '', valorVolta: '' });
+// Próximo período repete origem, destino e tipo do anterior (lançamentos com datas variadas para o mesmo trecho).
 const novoPeriodo = (base, tipoPadrao) => ({
   chave: ++chaveSeq,
   id: null,
   dataInicio: '',
   dataFim: '',
+  origem: base?.origem || null,
+  origemTexto: null,
   destino: base?.destino || null,
   destinoTexto: null,
   itens: [novoItem(base?.itens?.[0]?.tipoDiariaId || tipoPadrao || '')],
+  passagem: null,
 });
 
-function separarDestino(texto, id) {
+function separarMunicipio(texto, id) {
   const i = texto.lastIndexOf('/');
   return { id, nome: texto.slice(0, i), uf: texto.slice(i + 1) };
 }
 
+// Quantidade aceita "1,5" ou "1.5"; valores em R$ só têm vírgula (o campo não aceita ponto).
 const numero = (v) => (v === '' || v == null ? null : Number(String(v).replace(',', '.')));
-// Itens de diária propriamente ditos (sem os de valor livre, como passagem aérea), para a quantidade padrão = dias.
-const qtdDiarias = (itens, tipos) => itens.filter((i) => !tipos.find((t) => String(t.id) === String(i.tipoDiariaId))?.valorLivre).length;
+const moedaParaCampo = (v) => (v ? Number(v).toFixed(2).replace('.', ',') : '');
+const totalPassagem = (x) => (numero(x.valorIda) || 0) + (numero(x.valorVolta) || 0);
+
+function CampoMoeda({ value, onChange, ...props }) {
+  return (
+    <div className="relative">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant font-body-md text-body-md pointer-events-none">R$</span>
+      <input className="campo !pl-9 tabular" inputMode="decimal" placeholder="0,00" value={value}
+        onChange={(e) => onChange(e.target.value.replace(/[^\d,]/g, ''))} {...props} />
+    </div>
+  );
+}
+
+function TotalCartao({ rotulo, valor, destaque, children }) {
+  return (
+    <section className={`cartao p-padding-card ${destaque ? 'border-2 !border-primary' : ''}`}>
+      <h3 className="font-label-md text-label-md uppercase tracking-wider text-on-surface-variant mb-1">{rotulo}</h3>
+      <p className={`tabular ${destaque ? 'font-headline-lg text-headline-lg text-primary' : 'font-headline-sm text-headline-sm text-on-surface'}`}>{fmtMoeda(valor || 0)}</p>
+      {children}
+    </section>
+  );
+}
 
 export default function DiariaForm() {
   const { id } = useParams();
@@ -36,8 +66,6 @@ export default function DiariaForm() {
   const tipos = useTipos(true);
 
   const [servidor, setServidor] = useState(null);
-  const [origem, setOrigem] = useState(null);
-  const [origemTexto, setOrigemTexto] = useState(null);
   const [objetivo, setObjetivo] = useState('');
   const [processoSei, setProcessoSei] = useState('');
   const [observacao, setObservacao] = useState('');
@@ -58,9 +86,7 @@ export default function DiariaForm() {
       if (d.situacao === 'CANCELADA') setErro('Esta diária está cancelada e não pode ser editada.');
       setSituacaoAtual(d.situacao);
       setLegado(d.origem === 'LEGADO' ? d.legadoCodigo : null);
-      setServidor({ id: d.servidorId, nome: d.servidor, cpf: d.cpf, matricula: d.matricula });
-      setOrigem(d.cidadeOrigemId ? separarDestino(d.cidadeOrigem, d.cidadeOrigemId) : null);
-      setOrigemTexto(d.cidadeOrigemId ? null : d.cidadeOrigemTexto);
+      setServidor({ id: d.servidorId, nome: d.servidor, cpf: d.cpf, matricula: d.matricula, unidade: d.unidade });
       setObjetivo(d.objetivo);
       setProcessoSei(d.processoSei || '');
       setObservacao(d.observacao || '');
@@ -69,15 +95,24 @@ export default function DiariaForm() {
         id: p.id,
         dataInicio: p.dataInicio,
         dataFim: p.dataFim,
-        destino: p.destinoMunicipioId ? separarDestino(p.destino, p.destinoMunicipioId) : null,
+        origem: p.origemMunicipioId ? separarMunicipio(p.origem, p.origemMunicipioId) : null,
+        origemTexto: p.origemMunicipioId ? null : p.origemTexto,
+        destino: p.destinoMunicipioId ? separarMunicipio(p.destino, p.destinoMunicipioId) : null,
         destinoTexto: p.destinoMunicipioId ? null : p.destinoTexto,
         itens: p.itens.map((i) => ({
           chave: ++chaveSeq,
           id: i.id,
           tipoDiariaId: i.tipoDiariaId,
-          quantidade: i.valorLivre || (p.itens.filter((x) => !x.valorLivre).length === 1 && Number(i.quantidade) === p.dias) ? '' : String(i.quantidade).replace('.', ','),
-          valor: i.valorLivre ? String(i.valorUnitario.toFixed(2)).replace('.', ',') : '',
+          quantidade: p.itens.length === 1 && Number(i.quantidade) === p.dias ? '' : String(i.quantidade).replace('.', ','),
         })),
+        passagem: p.passagem ? {
+          agencia: p.passagem.agencia || '',
+          categoria: p.passagem.categoria || '',
+          dataIda: p.passagem.dataIda || '',
+          dataVolta: p.passagem.dataVolta || '',
+          valorIda: moedaParaCampo(p.passagem.valorIda),
+          valorVolta: moedaParaCampo(p.passagem.valorVolta),
+        } : null,
       })));
       setCarregando(false);
     })();
@@ -89,12 +124,11 @@ export default function DiariaForm() {
     setPeriodos((ps) => ps.map((p) => ({ ...p, itens: p.itens.map((i) => (i.tipoDiariaId ? i : { ...i, tipoDiariaId: tipos[0].id })) })));
   }, [tipos, editando]);
 
-  const livre = (tipoId) => !!tipos.find((t) => String(t.id) === String(tipoId))?.valorLivre;
-  const completo = (p) => p.dataInicio && p.dataFim && (p.destino || p.destinoTexto) && p.itens.length && p.itens.every((i) => i.tipoDiariaId);
+  const completo = (p) => p.dataInicio && p.dataFim && (p.destino || p.destinoTexto) && (p.origem || p.origemTexto)
+    && (p.itens.length || p.passagem) && p.itens.every((i) => i.tipoDiariaId);
 
   const requisicao = useMemo(() => ({
     servidorId: servidor?.id || 0,
-    origemMunicipioId: origem?.id ?? null,
     objetivo,
     processoSei,
     observacao,
@@ -102,12 +136,19 @@ export default function DiariaForm() {
       id: p.id,
       dataInicio: p.dataInicio,
       dataFim: p.dataFim,
+      origemMunicipioId: p.origem?.id ?? null,
       destinoMunicipioId: p.destino?.id ?? null,
-      itens: p.itens.map((i) => (livre(i.tipoDiariaId)
-        ? { id: i.id, tipoDiariaId: Number(i.tipoDiariaId), quantidade: null, valorUnitario: numero(i.valor) }
-        : { id: i.id, tipoDiariaId: Number(i.tipoDiariaId), quantidade: numero(i.quantidade) })),
+      itens: p.itens.map((i) => ({ id: i.id, tipoDiariaId: Number(i.tipoDiariaId), quantidade: numero(i.quantidade) })),
+      passagem: p.passagem ? {
+        agencia: p.passagem.agencia,
+        categoria: p.passagem.categoria,
+        dataIda: p.passagem.dataIda || null,
+        dataVolta: p.passagem.dataVolta || null,
+        valorIda: numero(p.passagem.valorIda),
+        valorVolta: numero(p.passagem.valorVolta),
+      } : null,
     })),
-  }), [servidor, origem, objetivo, processoSei, observacao, periodos, tipos]);
+  }), [servidor, objetivo, processoSei, observacao, periodos]);
 
   // Pré-visualização: valores e conflitos calculados no servidor (mesma regra da gravação).
   useEffect(() => {
@@ -125,8 +166,12 @@ export default function DiariaForm() {
       const novo = { ...p, [campo]: valor };
       if (campo === 'dataInicio' && (!p.dataFim || p.dataFim < valor)) novo.dataFim = valor;
       if (campo === 'destino' && valor) novo.destinoTexto = null;
+      if (campo === 'origem' && valor) novo.origemTexto = null;
       return novo;
     }));
+
+  const alterarPassagem = (chave, campo, valor) =>
+    setPeriodos((ps) => ps.map((p) => (p.chave !== chave ? p : { ...p, passagem: { ...p.passagem, [campo]: valor } })));
 
   const alterarItem = (pChave, iChave, campo, valor) =>
     setPeriodos((ps) => ps.map((p) => (p.chave !== pChave ? p : {
@@ -150,8 +195,10 @@ export default function DiariaForm() {
     e.preventDefault();
     setErro('');
     if (!servidor) { setErro('Selecione o servidor.'); return; }
-    if (!origem && !origemTexto) { setErro('Informe a cidade de origem da viagem.'); return; }
-    if (requisicao.periodos.length !== periodos.length) { setErro('Preencha datas, destino e tipo de diária de todos os períodos.'); return; }
+    if (requisicao.periodos.length !== periodos.length) {
+      setErro('Preencha datas, cidade de origem, destino e diárias (ou passagem aérea) de todos os períodos.');
+      return;
+    }
     setSalvando(true);
     const r = editando ? await api.put(`/api/diarias/${id}`, requisicao) : await api.post('/api/diarias', requisicao);
     setSalvando(false);
@@ -164,18 +211,19 @@ export default function DiariaForm() {
 
   const conflitos = simulacao?.conflitos || [];
   const errosCalculo = simulacao?.erros || [];
+  const qtdPassagens = periodos.filter((p) => p.passagem).length;
 
   return (
     <form onSubmit={salvar}>
       <CabecalhoPagina
         titulo={editando ? `Editar diária nº ${id}` : 'Lançar diária'}
-        subtitulo="Cada período tem destino e um ou mais tipos de diária (ex.: 2 integrais + 1 parcial). O valor vem da Tabela de Valores; passagens têm o valor informado no lançamento."
+        subtitulo="Cada período tem origem, destino e um ou mais tipos de diária (ex.: 2 integrais + 1 parcial), com valor da Tabela de Valores, e pode ter passagem aérea. A diária fica aprovada no lançamento."
         acoes={<Link to={editando ? `/diarias/${id}` : '/diarias'} className="btn-secundario"><Icone nome="arrow_back" /> Voltar</Link>}
       />
 
       <Alerta className="mb-4">{erro}</Alerta>
-      {editando && situacaoAtual && situacaoAtual !== 'PENDENTE' && situacaoAtual !== 'CANCELADA' && (
-        <Alerta tipo="aviso" className="mb-4">Ao salvar, a diária volta para <strong>pendente de aprovação</strong>.</Alerta>
+      {editando && (situacaoAtual === 'PENDENTE' || situacaoAtual === 'REJEITADA') && (
+        <Alerta tipo="info" className="mb-4">Esta diária ficou {situacaoAtual === 'PENDENTE' ? 'pendente' : 'rejeitada'} na etapa de aprovação, que não existe mais. Ao salvar, ela fica aprovada.</Alerta>
       )}
       {legado && (
         <Alerta tipo="info" className="mb-4">
@@ -186,19 +234,21 @@ export default function DiariaForm() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-gutter-grid">
         <div className="xl:col-span-2 flex flex-col gap-gutter-grid">
           <section className="cartao p-padding-card flex flex-col gap-form-element-gap">
-            <h3 className="font-headline-sm text-headline-sm text-primary">Servidor e objetivo</h3>
+            <h3 className="font-headline-sm text-headline-sm text-primary">Servidor e finalidade</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-form-element-gap">
               <Campo rotulo="Servidor *" className="md:col-span-2">
                 <SeletorServidor id="servidor" valor={servidor} onSelecionar={setServidor} />
               </Campo>
-              <Campo rotulo="Cidade de origem *">
-                <SeletorMunicipio id="origem" valor={origem} onSelecionar={(m) => { setOrigem(m); if (m) setOrigemTexto(null); }} placeholder="De onde parte a viagem" />
+              <Campo rotulo="Órgão">
+                <input className="campo" value="SEAP" disabled title={ORGAO} aria-label={`Órgão: ${ORGAO}`} />
               </Campo>
             </div>
-            {origemTexto && !origem && (
-              <Alerta tipo="aviso">Cidade de origem no sistema antigo: <strong>{origemTexto}</strong> (sem município identificado). Selecione o município, se souber.</Alerta>
+            {servidor && (servidor.matricula || servidor.unidade) && (
+              <p className="font-label-md text-label-md text-on-surface-variant -mt-2">
+                {servidor.matricula ? `Matrícula ${servidor.matricula}` : ''}{servidor.matricula && servidor.unidade ? ' · ' : ''}{servidor.unidade ? `Lotação: ${servidor.unidade}` : ''}
+              </p>
             )}
-            <Campo rotulo="Objetivo da viagem *">
+            <Campo rotulo="Finalidade (objetivo da viagem) *">
               <textarea className="campo min-h-[80px]" required maxLength={1000} value={objetivo} onChange={(e) => setObjetivo(e.target.value)}
                 placeholder="Ex.: Escolta de custodiado para audiência na comarca de Caruaru" />
             </Campo>
@@ -207,15 +257,18 @@ export default function DiariaForm() {
                 <input className="campo" maxLength={50} value={processoSei} onChange={(e) => setProcessoSei(e.target.value)} placeholder="0000000000.000000/0000-00" />
               </Campo>
               <Campo rotulo="Observação">
-                <input className="campo" maxLength={2000} value={observacao} onChange={(e) => setObservacao(e.target.value)} />
+                <input className="campo" maxLength={2000} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="Ex.: CI nº 98" />
               </Campo>
             </div>
           </section>
 
           <section className="cartao p-padding-card">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-headline-sm text-headline-sm text-primary">Períodos</h3>
-              <button type="button" className="btn-secundario" onClick={() => setPeriodos([...periodos, novoPeriodo(periodos[periodos.length - 1], tipos[0]?.id)])}>
+              <div>
+                <h3 className="font-headline-sm text-headline-sm text-primary">Períodos</h3>
+                <p className="font-label-md text-label-md text-on-surface-variant">Datas variadas no mesmo lançamento: adicione um período para cada data ou intervalo.</p>
+              </div>
+              <button type="button" className="btn-secundario shrink-0" onClick={() => setPeriodos([...periodos, novoPeriodo(periodos[periodos.length - 1], tipos[0]?.id)])}>
                 <Icone nome="add" /> Adicionar período
               </button>
             </div>
@@ -243,10 +296,18 @@ export default function DiariaForm() {
                       <Campo rotulo="Fim *" className="lg:col-span-3">
                         <CampoData required min={p.dataInicio} value={p.dataFim} onChange={(e) => alterarPeriodo(p.chave, 'dataFim', e.target.value)} />
                       </Campo>
-                      <Campo rotulo="Destino *" className="col-span-2 lg:col-span-6">
-                        <SeletorMunicipio valor={p.destino} onSelecionar={(m) => alterarPeriodo(p.chave, 'destino', m)} />
+                      <Campo rotulo="Cidade de origem *" className="col-span-2 lg:col-span-3">
+                        <SeletorMunicipio valor={p.origem} onSelecionar={(m) => alterarPeriodo(p.chave, 'origem', m)} placeholder="De onde parte" />
+                      </Campo>
+                      <Campo rotulo="Destino *" className="col-span-2 lg:col-span-3">
+                        <SeletorMunicipio valor={p.destino} onSelecionar={(m) => alterarPeriodo(p.chave, 'destino', m)} placeholder="Para onde vai" />
                       </Campo>
                     </div>
+                    {p.origemTexto && !p.origem && (
+                      <Alerta tipo="aviso" className="mt-3">
+                        Cidade de origem no sistema antigo: <strong>{p.origemTexto}</strong> (sem município identificado). Selecione o município, se souber.
+                      </Alerta>
+                    )}
                     {p.destinoTexto && !p.destino && (
                       <Alerta tipo="aviso" className="mt-3">
                         Destino no sistema antigo: <strong>{p.destinoTexto}</strong> (sem município identificado). Selecione o município, se souber.
@@ -258,14 +319,14 @@ export default function DiariaForm() {
                         <span className="rotulo">Diárias do período</span>
                         {p.itens.length < tipos.length && (
                           <button type="button" className="font-label-md text-label-md text-primary font-semibold hover:underline inline-flex items-center gap-1" onClick={() => adicionarItem(p.chave)}>
-                            <Icone nome="add" className="text-base" /> outro tipo
+                            <Icone nome="add" className="text-base" /> {p.itens.length ? 'outro tipo' : 'diária'}
                           </button>
                         )}
                       </div>
                       <div className="flex flex-col gap-2">
+                        {p.itens.length === 0 && <p className="font-body-md text-body-md text-on-surface-variant">Só passagem aérea neste período.</p>}
                         {p.itens.map((it) => {
                           const itCalc = calc?.itens.find((c) => String(c.tipoDiariaId) === String(it.tipoDiariaId));
-                          const valorLivre = livre(it.tipoDiariaId);
                           return (
                             <div key={it.chave} className="grid grid-cols-12 gap-2 items-center">
                               <select className="campo col-span-5" aria-label="Tipo de diária" required value={it.tipoDiariaId}
@@ -273,22 +334,14 @@ export default function DiariaForm() {
                                 <option value="">Tipo</option>
                                 {tipos.map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
                               </select>
-                              {valorLivre ? (
-                                <div className="col-span-3 relative">
-                                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant font-body-md text-body-md pointer-events-none">R$</span>
-                                  <input className="campo !pl-9 tabular" inputMode="decimal" aria-label="Valor da passagem" required placeholder="0,00"
-                                    value={it.valor} onChange={(e) => alterarItem(p.chave, it.chave, 'valor', e.target.value.replace(/[^\d,]/g, ''))} />
-                                </div>
-                              ) : (
-                                <input className="campo col-span-3 tabular" inputMode="decimal" aria-label="Quantidade"
-                                  placeholder={qtdDiarias(p.itens, tipos) === 1 && dias ? `${dias} (dias)` : 'Qtd.'}
-                                  value={it.quantidade} onChange={(e) => alterarItem(p.chave, it.chave, 'quantidade', e.target.value.replace(/[^\d.,]/g, ''))} />
-                              )}
+                              <input className="campo col-span-3 tabular" inputMode="decimal" aria-label="Quantidade"
+                                placeholder={p.itens.length === 1 && dias ? `${dias} (dias)` : 'Qtd.'}
+                                value={it.quantidade} onChange={(e) => alterarItem(p.chave, it.chave, 'quantidade', e.target.value.replace(/[^\d.,]/g, ''))} />
                               <span className="col-span-3 text-right font-body-md text-body-md text-on-surface-variant tabular whitespace-nowrap">
-                                {!itCalc ? '' : valorLivre ? 'valor informado' : `${fmtNumero(itCalc.quantidade)} × ${fmtMoeda(itCalc.valorUnitario)}`}
+                                {itCalc ? `${fmtNumero(itCalc.quantidade)} × ${fmtMoeda(itCalc.valorUnitario)}` : ''}
                               </span>
                               <div className="col-span-1 text-right">
-                                {p.itens.length > 1 && (
+                                {(p.itens.length > 1 || p.passagem) && (
                                   <button type="button" className="btn-icone !p-1 hover:!text-error" onClick={() => removerItem(p.chave, it.chave)} aria-label="Remover tipo">
                                     <Icone nome="close" className="text-lg" />
                                   </button>
@@ -299,9 +352,53 @@ export default function DiariaForm() {
                         })}
                       </div>
                     </div>
+
+                    <div className="mt-4">
+                      {!p.passagem ? (
+                        <button type="button" className="font-label-md text-label-md text-primary font-semibold hover:underline inline-flex items-center gap-1"
+                          onClick={() => alterarPeriodo(p.chave, 'passagem', novaPassagem(p))}>
+                          <Icone nome="flight" className="text-base" /> Adicionar passagem aérea
+                        </button>
+                      ) : (
+                        <div className="rounded-lg border border-outline-variant p-3">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="rotulo inline-flex items-center gap-1"><Icone nome="flight" className="text-base" /> Passagem aérea</span>
+                            <button type="button" className="btn-icone !p-1 hover:!text-error" aria-label="Remover passagem aérea"
+                              onClick={() => alterarPeriodo(p.chave, 'passagem', null)}><Icone nome="close" className="text-lg" /></button>
+                          </div>
+                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                            <Campo rotulo="Agência / companhia aérea *" className="col-span-2 lg:col-span-3">
+                              <input className="campo" maxLength={200} value={p.passagem.agencia} placeholder="Ex.: GOL"
+                                onChange={(e) => alterarPassagem(p.chave, 'agencia', e.target.value)} />
+                            </Campo>
+                            <Campo rotulo="Categoria" className="col-span-2 lg:col-span-1">
+                              <select className="campo" value={p.passagem.categoria} onChange={(e) => alterarPassagem(p.chave, 'categoria', e.target.value)}>
+                                <option value="">Não informada</option>
+                                {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
+                              </select>
+                            </Campo>
+                            <Campo rotulo="Data de ida">
+                              <CampoData value={p.passagem.dataIda} onChange={(e) => alterarPassagem(p.chave, 'dataIda', e.target.value)} />
+                            </Campo>
+                            <Campo rotulo="Valor da ida">
+                              <CampoMoeda value={p.passagem.valorIda} onChange={(v) => alterarPassagem(p.chave, 'valorIda', v)} aria-label="Valor da passagem de ida" />
+                            </Campo>
+                            <Campo rotulo="Data de volta">
+                              <CampoData value={p.passagem.dataVolta} min={p.passagem.dataIda} onChange={(e) => alterarPassagem(p.chave, 'dataVolta', e.target.value)} />
+                            </Campo>
+                            <Campo rotulo="Valor da volta">
+                              <CampoMoeda value={p.passagem.valorVolta} onChange={(v) => alterarPassagem(p.chave, 'valorVolta', v)} aria-label="Valor da passagem de volta" />
+                            </Campo>
+                          </div>
+                          <p className="mt-2 text-right font-body-md text-body-md tabular">Total da passagem aérea <strong>{fmtMoeda(totalPassagem(p.passagem))}</strong></p>
+                        </div>
+                      )}
+                    </div>
+
                     {calc && (
-                      <div className="mt-3 pt-3 border-t border-outline-variant/60 flex justify-end font-body-md text-body-md tabular">
-                        <span className="font-semibold">Subtotal {fmtMoeda(calc.valorTotal)}</span>
+                      <div className="mt-3 pt-3 border-t border-outline-variant/60 flex justify-end gap-4 font-body-md text-body-md tabular">
+                        <span>Diárias {fmtMoeda(calc.valorTotal)}</span>
+                        {calc.passagem && <span>Passagem {fmtMoeda(calc.passagem.valorTotal)}</span>}
                       </div>
                     )}
                   </div>
@@ -312,13 +409,17 @@ export default function DiariaForm() {
         </div>
 
         <aside className="flex flex-col gap-4 xl:sticky xl:top-20 self-start w-full">
-          <section className="cartao p-padding-card">
-            <h3 className="font-label-md text-label-md uppercase tracking-wider text-on-surface-variant mb-2">Total do lançamento</h3>
-            <p className="font-headline-lg text-headline-lg text-primary tabular">{fmtMoeda(simulacao?.valorTotal || 0)}</p>
+          <TotalCartao rotulo="Total do lançamento de diárias" valor={simulacao?.valorDiarias}>
             <p className="font-body-md text-body-md text-on-surface-variant mt-1">
-              {periodos.length} período{periodos.length > 1 ? 's' : ''} · entra como <strong>pendente de aprovação</strong>
+              {periodos.length} período{periodos.length > 1 ? 's' : ''} · aprovada no lançamento
             </p>
-          </section>
+          </TotalCartao>
+          <TotalCartao rotulo="Total do lançamento de passagens aéreas" valor={simulacao?.valorPassagens}>
+            <p className="font-body-md text-body-md text-on-surface-variant mt-1">
+              {qtdPassagens ? `${qtdPassagens} passage${qtdPassagens > 1 ? 'ns' : 'm'}` : 'Nenhuma passagem'}
+            </p>
+          </TotalCartao>
+          <TotalCartao destaque rotulo="Total de diárias e passagens aéreas" valor={simulacao?.valorTotal} />
 
           {conflitos.length > 0 && (
             <Alerta tipo="erro">

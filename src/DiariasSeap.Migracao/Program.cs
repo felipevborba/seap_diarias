@@ -9,7 +9,8 @@ using Seap.Compartilhado.Dados;
 //
 //   ConnectionStrings__DefaultConnection="Host=...;Database=carteira;Username=...;Password=..." \
 //   dotnet run --project src/DiariasSeap.Migracao -- --dados ../legado/sisdiaria/dados [--relatorios dir] [--confirmar]
-//   --somente-origem: só preenche a cidade de origem das diárias já migradas (não apaga nem renumera).
+//   --complementar: só atualiza as matrículas novas dos servidores e grava as passagens aéreas do legado nas diárias já
+//   migradas (não apaga nem renumera).
 //   Opções: --aplicar-schema (só banco local; em produção o deploy da API aplica), --forcar (reexecuta mesmo com
 //   diárias migradas já alteradas no sistema novo — apaga esse trabalho).
 //
@@ -51,12 +52,12 @@ else
     await using var c = new Npgsql.NpgsqlConnection(conexao);
     await c.OpenAsync();
     await using var cmd = new Npgsql.NpgsqlCommand(
-        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '004_tipo_valor_livre.sql'", c);
+        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '005_ajustes_seap_passagens.sql'", c);
     long aplicado;
     try { aplicado = (long)(await cmd.ExecuteScalarAsync())!; } catch { aplicado = 0; }
     if (aplicado == 0)
     {
-        Log("ERRO — o banco ainda não tem o schema desta versão (004_tipo_valor_livre.sql). " +
+        Log("ERRO — o banco ainda não tem o schema desta versão (005_ajustes_seap_passagens.sql). " +
             "Faça o deploy da API v2 antes de migrar (ou use --aplicar-schema em banco local).");
         return 3;
     }
@@ -71,7 +72,7 @@ await using var db = new DiariasContext(options);
 try
 {
     var migrador = new Migrador(db, dados, relatorios, Log, args.Contains("--forcar"));
-    var n = args.Contains("--somente-origem") ? await migrador.AtualizarOrigemAsync(confirmar) : await migrador.ExecutarAsync(confirmar);
+    var n = args.Contains("--complementar") ? await migrador.ComplementarAsync(confirmar) : await migrador.ExecutarAsync(confirmar);
     Log($"Fim: {n:N0} diárias em {(DateTime.Now - inicio).TotalSeconds:N0}s.");
     return 0;
 }

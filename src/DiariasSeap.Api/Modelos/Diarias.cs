@@ -10,8 +10,17 @@ public class TipoDiaria : IAuditavel
     public string Nome { get; set; } = null!;
     public string? Descricao { get; set; }
     public bool Ativo { get; set; } = true;
-    /// <summary>Valor digitado no lançamento (ex.: passagem aérea), sem Tabela de Valores; quantidade sempre 1.</summary>
+    /// <summary>Coluna em que o tipo entra no Mapa de Diárias e Passagens da Controladoria (INTEGRAL ou PARCIAL).</summary>
+    public string ColunaMapa { get; set; } = ColunasMapa.Integral;
+    /// <summary>Obsoleto (versão 004): passagens agora têm cadastro próprio (<see cref="DiariaPassagem"/>). Tipos marcados
+    /// assim não aparecem mais no lançamento; ficam só para exibir lançamentos antigos.</summary>
     public bool ValorLivre { get; set; }
+}
+
+public static class ColunasMapa
+{
+    public const string Integral = "INTEGRAL";
+    public const string Parcial = "PARCIAL";
 }
 
 /// <summary>
@@ -33,8 +42,8 @@ public class ValorDiaria : IAuditavel
 }
 
 /// <summary>
-/// Ciclo de vida: PENDENTE (lançada) -&gt; APROVADA ou REJEITADA. PENDENTE/APROVADA podem ser canceladas.
-/// Editar uma diária aprovada ou rejeitada a devolve para PENDENTE.
+/// Desde os ajustes de 20/10/2026 não há etapa de aprovação: a diária nasce APROVADA e a exclusão substitui o
+/// cancelamento. PENDENTE, REJEITADA e CANCELADA continuam existindo só em registros antigos (legado e testes).
 /// </summary>
 public static class SituacaoDiaria
 {
@@ -61,20 +70,18 @@ public class Diaria : IAuditavel
     public Vinculo Vinculo { get; set; }
     public int? CargoId { get; set; }
     public int? UnidadeId { get; set; }
-    /// <summary>Cidade de onde parte a viagem (obrigatória em lançamentos novos).</summary>
-    public int? OrigemMunicipioId { get; set; }
-    /// <summary>Cidade de origem como digitada no legado (preservada mesmo quando o município foi identificado).</summary>
-    public string? OrigemTexto { get; set; }
     public string Objetivo { get; set; } = null!;
     public string? ProcessoSei { get; set; }
     public string? Observacao { get; set; }
-    public string Situacao { get; set; } = SituacaoDiaria.Pendente;
+    public string Situacao { get; set; } = SituacaoDiaria.Aprovada;
     public string? MotivoCancelamento { get; set; }
     public int? DecididoPorId { get; set; }
     public string? DecididoPorNome { get; set; }
     public DateTime? DecididoEm { get; set; }
     public string? MotivoRejeicao { get; set; }
+    /// <summary>Total geral: diárias + passagens.</summary>
     public decimal ValorTotal { get; set; }
+    public decimal ValorPassagens { get; set; }
     public string Origem { get; set; } = Origens.Sistema;
     /// <summary>Código no legado (diaria.codigo do MySQL "diarias?seres").</summary>
     public int? LegadoCodigo { get; set; }
@@ -86,7 +93,6 @@ public class Diaria : IAuditavel
     public Servidor Servidor { get; set; } = null!;
     public Cargo? Cargo { get; set; }
     public Unidade? Unidade { get; set; }
-    public Tabnaturalidade? OrigemMunicipio { get; set; }
     public List<DiariaPeriodo> Periodos { get; set; } = new();
 }
 
@@ -98,10 +104,15 @@ public class DiariaPeriodo : IAuditavelFilho
     public int ServidorId { get; set; }
     public DateOnly DataInicio { get; set; }
     public DateOnly DataFim { get; set; }
+    /// <summary>Cidade de onde parte o trecho (obrigatória em lançamentos novos).</summary>
+    public int? OrigemMunicipioId { get; set; }
+    /// <summary>Cidade de origem como digitada no legado (preservada mesmo quando o município foi identificado).</summary>
+    public string? OrigemTexto { get; set; }
     /// <summary>Obrigatório em lançamentos do sistema; pode ser nulo em períodos migrados sem município identificado.</summary>
     public int? DestinoMunicipioId { get; set; }
     /// <summary>Destino como digitado no legado (preservado mesmo quando o município foi identificado).</summary>
     public string? DestinoTexto { get; set; }
+    /// <summary>Só as diárias do período; a passagem fica em <see cref="Passagem"/>.</summary>
     public decimal ValorTotal { get; set; }
     /// <summary>Falso quando a diária é cancelada ou rejeitada: libera as datas para novo lançamento.</summary>
     public bool Ativo { get; set; } = true;
@@ -109,11 +120,32 @@ public class DiariaPeriodo : IAuditavelFilho
     public bool IsentoSobreposicao { get; set; }
 
     public Diaria Diaria { get; set; } = null!;
+    public Tabnaturalidade? OrigemMunicipio { get; set; }
     public Tabnaturalidade? DestinoMunicipio { get; set; }
     public List<DiariaItem> Itens { get; set; } = new();
+    public DiariaPassagem? Passagem { get; set; }
 
     string IAuditavelFilho.RaizEntidade => "diaria";
     int IAuditavelFilho.RaizId => DiariaId;
+}
+
+/// <summary>Passagem aérea do período (campos do ANEXO 2 do legado e das colunas M–S do Mapa da Controladoria).</summary>
+public class DiariaPassagem : IAuditavelFilho
+{
+    public int Id { get; set; }
+    public int PeriodoId { get; set; }
+    public string? Agencia { get; set; }
+    public string? Categoria { get; set; }
+    public DateOnly? DataIda { get; set; }
+    public DateOnly? DataVolta { get; set; }
+    public decimal ValorIda { get; set; }
+    public decimal ValorVolta { get; set; }
+    public decimal ValorTotal { get; set; }
+
+    public DiariaPeriodo Periodo { get; set; } = null!;
+
+    string IAuditavelFilho.RaizEntidade => "diaria";
+    int IAuditavelFilho.RaizId => Periodo?.DiariaId ?? 0;
 }
 
 /// <summary>Quantidade de um tipo de diária dentro de um período (ex.: 2 Integrais + 1 Parcial).</summary>

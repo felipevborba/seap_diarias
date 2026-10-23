@@ -41,6 +41,18 @@ public static partial class Texto
     /// <summary>Matrícula comparável: só dígitos, sem zeros à esquerda ("3283135/01" -&gt; "328313501").</summary>
     public static string Matricula(string? valor) => Digitos(valor).TrimStart('0');
 
+    /// <summary>Matrícula no formato SAD "1234567/01" (dígitos, barra, 2 dígitos de vínculo); null se não estiver nesse formato.</summary>
+    public static string? MatriculaNova(string? valor)
+    {
+        var partes = (valor ?? "").Trim().Split('/');
+        if (partes.Length != 2) return null;
+        var (num, vinc) = (Digitos(partes[0]).TrimStart('0'), Digitos(partes[1]));
+        return num.Length is >= 4 and <= 10 && vinc.Length == 2 ? $"{num}/{vinc}" : null;
+    }
+
+    /// <summary>Campo de texto do legado em que "0", "vazio" ou branco significam "não informado".</summary>
+    public static string? SemZero(string? valor) => Limpo(valor) is { } v && v != "0" && !v.Equals("vazio", StringComparison.OrdinalIgnoreCase) ? v : null;
+
     public static string? Cortar(string? valor, int max) => valor == null || valor.Length <= max ? valor : valor[..(max - 1)] + "…";
 
     public static decimal Decimal(string? valor) =>

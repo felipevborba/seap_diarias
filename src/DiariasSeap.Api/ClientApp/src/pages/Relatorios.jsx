@@ -16,38 +16,48 @@ export default function Relatorios() {
   const regioes = useRegioes();
   const avisar = useAviso();
   // Padrão: lançamentos cadastrados a partir do 1º dia do mês (data do cadastro); a data da diária fica livre.
-  const vazio = { dataInicio: '', dataFim: '', cadastroInicio: primeiroDiaMes(), cadastroFim: '', servidor: '', unidadeId: '', destino: null,
+  const vazio = { dataInicio: '', dataFim: '', cadastroInicio: primeiroDiaMes(), cadastroFim: '', servidor: '', unidadeIds: [], destino: null,
     cidadeOrigem: null, regiaoId: '', tipoDiariaId: '', vinculo: '', situacao: 'VIGENTES', origem: '' };
   const [filtro, setFiltro] = useState(vazio);
   const [aplicado, setAplicado] = useState(vazio);
   const [pagina, setPagina] = useState(1);
-  const [exportando, setExportando] = useState(false);
+  const [exportando, setExportando] = useState('');
 
   const params = (f) => ({
     dataInicio: f.dataInicio, dataFim: f.dataFim, cadastroInicio: f.cadastroInicio, cadastroFim: f.cadastroFim,
-    servidor: f.servidor, unidadeId: f.unidadeId, destinoMunicipioId: f.destino?.id, cidadeOrigemId: f.cidadeOrigem?.id,
+    servidor: f.servidor, unidadeIds: f.unidadeIds, destinoMunicipioId: f.destino?.id, cidadeOrigemId: f.cidadeOrigem?.id,
     regiaoId: f.regiaoId, tipoDiariaId: f.tipoDiariaId, vinculo: f.vinculo,
     situacao: f.situacao === '' ? 'TODAS' : f.situacao, origem: f.origem,
   });
   const { dados, carregando, erro } = useDados('/api/relatorios', { ...params(aplicado), page: pagina, pageSize: 50 });
   const set = (k) => (e) => setFiltro({ ...filtro, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
 
-  const exportar = async () => {
-    setExportando(true);
-    const r = await api.download('/api/relatorios/exportar', params(aplicado), 'diarias.xlsx');
-    setExportando(false);
+  const exportar = async (tipo) => {
+    setExportando(tipo);
+    const r = tipo === 'mapa'
+      ? await api.download('/api/relatorios/mapa-controladoria', params(aplicado), 'Planilha_de_Diarias_SEAP.xlsx')
+      : await api.download('/api/relatorios/exportar', params(aplicado), 'diarias_detalhado.xlsx');
+    setExportando('');
     if (!r.success) avisar(r.message, 'erro');
   };
+  const nomeUnidade = (id) => unidades.find((u) => String(u.id) === String(id))?.nome || id;
 
   return (
     <>
       <CabecalhoPagina
         titulo="Relatórios"
-        subtitulo="Uma linha por tipo de diária de cada período. Filtre pela data do cadastro (quando foi lançada) e/ou pela data da diária (período da viagem). A planilha segue os mesmos filtros."
+        subtitulo="Uma linha por tipo de diária de cada período. Filtre pela data do cadastro (quando foi lançada) e/ou pela data da diária (período da viagem). As planilhas seguem os mesmos filtros."
         acoes={
-          <button type="button" className="btn-primario" onClick={exportar} disabled={exportando || !dados?.linhas.totalItems}>
-            <Icone nome="download" /> {exportando ? 'Gerando...' : 'Planilha da Controladoria (.xlsx)'}
-          </button>
+          <>
+            <button type="button" className="btn-secundario" onClick={() => exportar('detalhada')} disabled={!!exportando || !dados?.linhas.totalItems}
+              title="Uma linha por tipo de diária, com região, vínculo, banco e situação">
+              <Icone nome="table" /> {exportando === 'detalhada' ? 'Gerando...' : 'Planilha detalhada'}
+            </button>
+            <button type="button" className="btn-primario" onClick={() => exportar('mapa')} disabled={!!exportando}
+              title="ANEXO VII - Mapa de Diárias e Passagens (Portaria SCGE 27/2022), no mesmo formato da planilha mensal do sistema antigo">
+              <Icone nome="download" /> {exportando === 'mapa' ? 'Gerando...' : 'Mapa da Controladoria (.xlsx)'}
+            </button>
+          </>
         }
       />
 
@@ -68,11 +78,24 @@ export default function Relatorios() {
           </div>
         </fieldset>
         <label className="flex flex-col gap-1.5 lg:col-span-2"><span className="rotulo">Servidor</span>
-          <input className="campo" value={filtro.servidor} onChange={set('servidor')} placeholder="Nome, CPF ou matrícula" /></label>
-        <label className="flex flex-col gap-1.5"><span className="rotulo">Lotação</span>
-          <select className="campo" value={filtro.unidadeId} onChange={set('unidadeId')}>
-            <option value="">Todas</option>{unidades.map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
-          </select></label>
+          <input className="campo" value={filtro.servidor} onChange={set('servidor')} placeholder="Nome, CPF, matrícula ou processo SEI" /></label>
+        <div className="flex flex-col gap-1.5"><span className="rotulo">Lotações</span>
+          <select className="campo" value="" aria-label="Adicionar lotação ao filtro"
+            onChange={(e) => e.target.value && setFiltro({ ...filtro, unidadeIds: [...filtro.unidadeIds, e.target.value] })}>
+            <option value="">{filtro.unidadeIds.length ? 'Adicionar outra...' : 'Todas (escolha uma ou várias)'}</option>
+            {unidades.filter((u) => !filtro.unidadeIds.includes(String(u.id))).map((u) => <option key={u.id} value={u.id}>{u.nome}</option>)}
+          </select>
+          {filtro.unidadeIds.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {filtro.unidadeIds.map((id) => (
+                <button key={id} type="button" className="inline-flex items-center gap-1 rounded-full bg-secondary-container text-on-secondary-container px-2 py-0.5 font-label-md text-label-md"
+                  onClick={() => setFiltro({ ...filtro, unidadeIds: filtro.unidadeIds.filter((x) => x !== id) })} aria-label={`Remover ${nomeUnidade(id)} do filtro`}>
+                  {nomeUnidade(id)} <Icone nome="close" className="text-sm" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <div className="flex flex-col gap-1.5"><span className="rotulo">Cidade de origem</span>
           <SeletorMunicipio valor={filtro.cidadeOrigem} onSelecionar={(m) => setFiltro({ ...filtro, cidadeOrigem: m })} placeholder="Qualquer" /></div>
         <div className="flex flex-col gap-1.5"><span className="rotulo">Destino</span>

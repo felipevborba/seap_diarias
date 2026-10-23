@@ -98,7 +98,7 @@ public class AnalisesService
             k => ((int?)k.Id, null, k.Nome, k.Matricula)),
         "destino" => Agrupar(q, i => new { Id = i.Periodo.DestinoMunicipioId, i.Periodo.DestinoMunicipio!.Nome, Uf = i.Periodo.DestinoMunicipio!.Uf.Sigla },
             k => (k.Id, null, k.Nome, k.Uf)),
-        "cidadeOrigem" => Agrupar(q, i => new { Id = i.Periodo.Diaria.OrigemMunicipioId, i.Periodo.Diaria.OrigemMunicipio!.Nome, Uf = i.Periodo.Diaria.OrigemMunicipio!.Uf.Sigla },
+        "cidadeOrigem" => Agrupar(q, i => new { Id = i.Periodo.OrigemMunicipioId, i.Periodo.OrigemMunicipio!.Nome, Uf = i.Periodo.OrigemMunicipio!.Uf.Sigla },
             k => (k.Id, null, k.Nome, k.Uf)),
         "regiao" => AgruparRegiao(q),
         "tipo" => Agrupar(q, i => new { Id = i.TipoDiariaId, i.TipoDiaria.Nome }, k => ((int?)k.Id, null, k.Nome, null)),

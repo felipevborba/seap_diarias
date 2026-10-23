@@ -8,7 +8,9 @@ const COR_SERIE = '#2f62b8';
 const compacto = new Intl.NumberFormat('pt-BR', { notation: 'compact', maximumFractionDigits: 1 });
 const fmtCompacto = (v) => `R$ ${compacto.format(v)}`;
 
-function Moldura({ titulo, subtitulo, children, dados }) {
+const pct = (v, total) => (total > 0 ? `${((v / total) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%` : '');
+
+function Moldura({ titulo, subtitulo, children, dados, total }) {
   const [tabela, setTabela] = useState(false);
   return (
     <section className="cartao p-padding-card flex flex-col">
@@ -26,13 +28,14 @@ function Moldura({ titulo, subtitulo, children, dados }) {
         <p className="font-body-md text-body-md text-on-surface-variant py-8 text-center">Sem dados no período.</p>
       ) : tabela ? (
         <table className="tabela">
-          <thead><tr><th>Item</th><th className="text-right">Períodos</th><th className="text-right">Valor</th></tr></thead>
+          <thead><tr><th>Item</th><th className="text-right">Períodos</th><th className="text-right">Valor</th>{total > 0 && <th className="text-right">% do total</th>}</tr></thead>
           <tbody>
             {dados.map((d) => (
               <tr key={d.rotulo}>
                 <td>{d.rotulo}</td>
                 <td className="text-right tabular">{fmtNumero(d.quantidade)}</td>
                 <td className="text-right tabular">{fmtMoeda(d.valor)}</td>
+                {total > 0 && <td className="text-right tabular">{pct(d.valor, total)}</td>}
               </tr>
             ))}
           </tbody>
@@ -42,21 +45,22 @@ function Moldura({ titulo, subtitulo, children, dados }) {
   );
 }
 
-function Dica({ item }) {
+function Dica({ item, total }) {
   return (
     <div className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full -mt-2 left-1/2 top-0 whitespace-nowrap rounded-lg bg-inverse-surface text-inverse-on-surface px-3 py-2 shadow-lg font-label-md text-label-md">
       <div className="font-semibold">{item.rotulo}</div>
       <div className="tabular">{fmtMoeda(item.valor)} · {fmtNumero(item.quantidade)} período{item.quantidade === 1 ? '' : 's'}</div>
+      {total > 0 && <div className="tabular opacity-80">{pct(item.valor, total)} do total do período</div>}
     </div>
   );
 }
 
-/** Barras horizontais ranqueadas (regiões, destinos, unidades, tipos). */
-export function BarrasHorizontais({ titulo, subtitulo, dados }) {
+/** Barras horizontais ranqueadas (regiões, destinos, unidades, tipos). Com `total`, mostra o percentual de cada barra. */
+export function BarrasHorizontais({ titulo, subtitulo, dados, total }) {
   const [hover, setHover] = useState(null);
   const max = Math.max(...dados.map((d) => d.valor), 0) || 1;
   return (
-    <Moldura titulo={titulo} subtitulo={subtitulo} dados={dados}>
+    <Moldura titulo={titulo} subtitulo={subtitulo} dados={dados} total={total}>
       <ul className="flex flex-col gap-3">
         {dados.map((d) => (
           <li key={d.rotulo}
@@ -65,9 +69,11 @@ export function BarrasHorizontais({ titulo, subtitulo, dados }) {
             <span className="font-body-md text-body-md text-on-surface truncate" title={d.rotulo}>{d.rotulo}</span>
             <div className="relative flex items-center gap-2 h-6">
               <div className="h-4 rounded-r-[4px] transition-opacity"
-                style={{ width: `${Math.max((d.valor / max) * 100, 0.5)}%`, maxWidth: 'calc(100% - 5.5rem)', background: COR_SERIE, opacity: hover && hover !== d.rotulo ? 0.45 : 1 }} />
-              <span className="font-label-md text-label-md text-on-surface-variant tabular whitespace-nowrap">{fmtCompacto(d.valor)}</span>
-              {hover === d.rotulo && <Dica item={d} />}
+                style={{ width: `${Math.max((d.valor / max) * 100, 0.5)}%`, maxWidth: total > 0 ? 'calc(100% - 8.5rem)' : 'calc(100% - 5.5rem)', background: COR_SERIE, opacity: hover && hover !== d.rotulo ? 0.45 : 1 }} />
+              <span className="font-label-md text-label-md text-on-surface-variant tabular whitespace-nowrap">
+                {fmtCompacto(d.valor)}{total > 0 && <span className="text-on-surface font-semibold"> · {pct(d.valor, total)}</span>}
+              </span>
+              {hover === d.rotulo && <Dica item={d} total={total} />}
             </div>
           </li>
         ))}

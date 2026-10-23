@@ -1,13 +1,20 @@
 import React, { useState } from 'react';
 import api from '../api';
 import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, Modal, Selo, Vazio, useAviso } from '../components/ui';
+import { fmtNumero } from '../lib/formato';
 import { useDados } from '../lib/useDados';
 
+// Exclusão de cargo em uso pede um substituto: serve para unificar cadastros duplicados vindos do legado
+// ("AGENTE SEG PENITENCIARIA", "AGENTE DE SEG PENITENCIARIA"...).
 export default function Cargos() {
   const avisar = useAviso();
   const { dados, carregando, erro, recarregar } = useDados('/api/cadastros/cargos');
+  const [busca, setBusca] = useState('');
   const [form, setForm] = useState(null);
   const [erroForm, setErroForm] = useState('');
+  const [excluir, setExcluir] = useState(null); // { cargo, substitutoId }
+  const [erroExcluir, setErroExcluir] = useState('');
+  const [excluindo, setExcluindo] = useState(false);
 
   const salvar = async (e) => {
     e.preventDefault();
@@ -18,6 +25,21 @@ export default function Cargos() {
     recarregar();
   };
 
+  const confirmarExclusao = async () => {
+    setErroExcluir('');
+    setExcluindo(true);
+    const sufixo = excluir.substitutoId ? `?substitutoId=${excluir.substitutoId}` : '';
+    const r = await api.del(`/api/cadastros/cargos/${excluir.cargo.id}${sufixo}`);
+    setExcluindo(false);
+    if (!r.success) { setErroExcluir(r.message); return; }
+    avisar(r.message);
+    setExcluir(null);
+    recarregar();
+  };
+
+  const emUso = (c) => c.servidores + c.diarias + c.valores > 0;
+  const lista = (dados || []).filter((c) => !busca || c.nome.toLowerCase().includes(busca.toLowerCase()));
+
   return (
     <>
       <CabecalhoPagina
@@ -26,20 +48,31 @@ export default function Cargos() {
         acoes={<button type="button" className="btn-primario" onClick={() => { setErroForm(''); setForm({ nome: '', ativo: true }); }}><Icone nome="add" /> Novo cargo</button>}
       />
       <Alerta className="mb-4">{erro}</Alerta>
-      <div className="cartao overflow-hidden max-w-3xl">
-        {carregando && !dados ? <Carregando /> : !dados?.length ? <Vazio icone="work" texto="Nenhum cargo cadastrado." /> : (
-          <table className="tabela">
-            <thead><tr><th>Nome</th><th>Situação</th><th /></tr></thead>
-            <tbody>
-              {dados.map((c) => (
-                <tr key={c.id}>
-                  <td className="font-semibold">{c.nome}</td>
-                  <td>{c.ativo ? <Selo cor="verde">Ativo</Selo> : <Selo>Inativo</Selo>}</td>
-                  <td className="text-right"><button type="button" className="btn-icone" aria-label={`Editar ${c.nome}`} onClick={() => { setErroForm(''); setForm({ ...c }); }}><Icone nome="edit" /></button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className="cartao overflow-hidden max-w-4xl">
+        <div className="p-4 border-b border-outline-variant/60">
+          <input className="campo sm:!w-80" placeholder="Buscar cargo" value={busca} onChange={(e) => setBusca(e.target.value)} aria-label="Buscar cargo" />
+        </div>
+        {carregando && !dados ? <Carregando /> : !lista.length ? <Vazio icone="work" texto="Nenhum cargo encontrado." /> : (
+          <div className="overflow-x-auto">
+            <table className="tabela">
+              <thead><tr><th>Nome</th><th className="text-right">Servidores</th><th className="text-right">Diárias</th><th>Situação</th><th /></tr></thead>
+              <tbody>
+                {lista.map((c) => (
+                  <tr key={c.id}>
+                    <td className="font-semibold">{c.nome}</td>
+                    <td className="text-right tabular">{fmtNumero(c.servidores)}</td>
+                    <td className="text-right tabular">{fmtNumero(c.diarias)}</td>
+                    <td>{c.ativo ? <Selo cor="verde">Ativo</Selo> : <Selo>Inativo</Selo>}</td>
+                    <td className="text-right whitespace-nowrap">
+                      <button type="button" className="btn-icone" aria-label={`Editar ${c.nome}`} onClick={() => { setErroForm(''); setForm({ ...c }); }}><Icone nome="edit" /></button>
+                      <button type="button" className="btn-icone hover:!text-error" aria-label={`Excluir ${c.nome}`} title={emUso(c) ? 'Excluir e passar os registros para outro cargo' : 'Excluir'}
+                        onClick={() => { setErroExcluir(''); setExcluir({ cargo: c, substitutoId: '' }); }}><Icone nome="delete" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -55,6 +88,33 @@ export default function Cargos() {
               <span className="font-body-md text-body-md">Ativo</span>
             </label>
           </form>
+        )}
+      </Modal>
+
+      <Modal aberto={!!excluir} titulo="Excluir cargo" onFechar={() => setExcluir(null)}
+        rodape={<><button type="button" className="btn-secundario" onClick={() => setExcluir(null)}>Voltar</button>
+          <button type="button" className="btn-perigo" disabled={excluindo || (emUso(excluir?.cargo || {}) && !excluir?.substitutoId)} onClick={confirmarExclusao}>
+            <Icone nome="delete" /> Excluir</button></>}>
+        {excluir && (
+          <div className="flex flex-col gap-form-element-gap">
+            <Alerta>{erroExcluir}</Alerta>
+            {emUso(excluir.cargo) ? (
+              <>
+                <p className="font-body-md text-body-md">
+                  <strong>{excluir.cargo.nome}</strong> está em uso por {fmtNumero(excluir.cargo.servidores)} servidores, {fmtNumero(excluir.cargo.diarias)} diárias
+                  e {fmtNumero(excluir.cargo.valores)} valores da tabela. Escolha o cargo que vai ficar no lugar dele:
+                </p>
+                <Campo rotulo="Substituir por *">
+                  <select className="campo" value={excluir.substitutoId} onChange={(e) => setExcluir({ ...excluir, substitutoId: e.target.value })}>
+                    <option value="">Selecione</option>
+                    {(dados || []).filter((c) => c.id !== excluir.cargo.id).map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                  </select>
+                </Campo>
+              </>
+            ) : (
+              <p className="font-body-md text-body-md">Excluir o cargo <strong>{excluir.cargo.nome}</strong>? Ele não está em uso.</p>
+            )}
+          </div>
         )}
       </Modal>
     </>

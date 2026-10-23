@@ -15,9 +15,11 @@ function topoEscala(max) {
 }
 
 /** Colunas no tempo (mês ou ano). Clique numa coluna = drill para aquele período. */
-export function ColunasSerie({ pontos, onSelecionar, selecionado }) {
+export function ColunasSerie({ pontos, onSelecionar, selecionado, mostrarPercentual = false }) {
   const [hover, setHover] = useState(null);
   const max = Math.max(...pontos.map((p) => p.valor), 0);
+  const total = pontos.reduce((a, p) => a + p.valor, 0);
+  const pct = (v) => (total > 0 ? `${((v / total) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%` : '');
   const topo = topoEscala(max);
   const maior = pontos.reduce((a, p) => (p.valor > (a?.valor ?? -1) ? p : a), null);
   const rotular = pontos.length <= 16 ? () => true : (i) => i % Math.ceil(pontos.length / 12) === 0;
@@ -55,6 +57,7 @@ export function ColunasSerie({ pontos, onSelecionar, selecionado }) {
                   <span className="pointer-events-none absolute z-20 bottom-full mb-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-inverse-surface text-inverse-on-surface px-3 py-2 shadow-lg font-label-md text-label-md text-left">
                     <span className="block font-semibold">{p.rotulo}</span>
                     <span className="block tabular">{fmtMoeda(p.valor)} · {fmtNumero(p.diarias)} diárias</span>
+                    {mostrarPercentual && <span className="block tabular">{pct(p.valor)} do total do período</span>}
                     <span className="block opacity-80">Clique para filtrar</span>
                   </span>
                 )}
@@ -65,7 +68,10 @@ export function ColunasSerie({ pontos, onSelecionar, selecionado }) {
       </div>
       <div className="flex pl-16 mt-2">
         {pontos.map((p, i) => (
-          <span key={p.chave} className="flex-1 text-center font-label-md text-label-md text-on-surface-variant truncate">{rotular(i) ? p.rotulo : ''}</span>
+          <span key={p.chave} className="flex-1 text-center font-label-md text-label-md text-on-surface-variant truncate">
+            {rotular(i) ? p.rotulo : ''}
+            {mostrarPercentual && rotular(i) && p.valor > 0 && <span className="block text-on-surface font-semibold tabular">{pct(p.valor)}</span>}
+          </span>
         ))}
       </div>
     </div>

@@ -6,12 +6,13 @@ using Seap.Compartilhado.Respostas;
 
 namespace DiariasSeap.Api.Servicos;
 
-public record CargoDto(int Id, string Nome, bool Ativo);
+public record CargoDto(int Id, string Nome, bool Ativo, int Servidores, int Diarias, int Valores);
 public record CargoRequest(string Nome, bool Ativo);
 public record RegiaoDto(int Id, string Nome, List<MunicipioDto> Municipios);
 public record RegiaoRequest(string Nome, List<int> MunicipioIds);
-public record TipoDiariaDto(int Id, string Nome, string? Descricao, bool Ativo, bool ValorLivre);
-public record TipoDiariaRequest(string Nome, string? Descricao, bool Ativo, bool ValorLivre = false);
+/// <summary>Obsoleto = tipo "valor livre" da versão 004 (passagem como diária); não aparece mais no lançamento.</summary>
+public record TipoDiariaDto(int Id, string Nome, string? Descricao, bool Ativo, string ColunaMapa, bool Obsoleto);
+public record TipoDiariaRequest(string Nome, string? Descricao, bool Ativo, string? ColunaMapa = null);
 public record ValorDiariaDto(int Id, int TipoDiariaId, string TipoDiaria, Vinculo? Vinculo, int? CargoId, string? Cargo,
     decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim);
 public record LotacaoDto(int Id, string? Sigla, string Nome, int Policiais, int Servidores, int Diarias);
@@ -26,9 +27,76 @@ public class CadastrosService
     public CadastrosService(DiariasContext db) => _db = db;
 
     // ---------- Cargos ----------
-    public Task<List<CargoDto>> CargosAsync(bool somenteAtivos) =>
-        _db.Cargos.AsNoTracking().Where(c => !somenteAtivos || c.Ativo).OrderBy(c => c.Nome)
-            .Select(c => new CargoDto(c.Id, c.Nome, c.Ativo)).ToListAsync();
+    public async Task<List<CargoDto>> CargosAsync(bool somenteAtivos)
+    {
+        var cargos = await _db.Cargos.AsNoTracking().Where(c => !somenteAtivos || c.Ativo).OrderBy(c => c.Nome).ToListAsync();
+        if (somenteAtivos) return cargos.Select(c => new CargoDto(c.Id, c.Nome, c.Ativo, 0, 0, 0)).ToList();
+        var servidores = await Contagem(_db.Servidores.Where(s => s.CargoId != null).GroupBy(s => s.CargoId!.Value));
+        var diarias = await Contagem(_db.Diarias.Where(d => d.CargoId != null).GroupBy(d => d.CargoId!.Value));
+        var valores = await Contagem(_db.ValoresDiaria.Where(v => v.CargoId != null).GroupBy(v => v.CargoId!.Value));
+        return cargos.Select(c => new CargoDto(c.Id, c.Nome, c.Ativo, servidores.GetValueOrDefault(c.Id),
+            diarias.GetValueOrDefault(c.Id), valores.GetValueOrDefault(c.Id))).ToList();
+    }
+
+    private static Task<Dictionary<int, int>> Contagem<T>(IQueryable<IGrouping<int, T>> grupos) =>
+        grupos.Select(g => new { g.Key, N = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.N);
+
+    /// <summary>
+    /// Exclui o cargo. Se estiver em uso, exige um cargo substituto (útil para unificar cadastros duplicados como
+    /// "AGENTE SEG PENITENCIARIA" / "AGENTE DE SEG PENITENCIARIA"): servidores, diárias e linhas da Tabela de
+    /// Valores passam para o substituto.
+    /// </summary>
+    public async Task<string> ExcluirCargoAsync(int id, int? substitutoId)
+    {
+        var cargo = await _db.Cargos.FindAsync(id) ?? throw new NaoEncontradoException("Cargo não encontrado.");
+        if (string.Equals(cargo.Nome, ServidoresService.CargoPolicialPenal, StringComparison.OrdinalIgnoreCase))
+            throw new RegraNegocioException($"O cargo \"{cargo.Nome}\" é usado pela sincronização com a Carteira e não pode ser excluído.");
+        var servidores = await _db.Servidores.CountAsync(s => s.CargoId == id);
+        var diarias = await _db.Diarias.CountAsync(d => d.CargoId == id);
+        var valores = await _db.ValoresDiaria.Where(v => v.CargoId == id).ToListAsync();
+        var emUso = servidores + diarias + valores.Count > 0;
+
+        Cargo? substituto = null;
+        if (emUso)
+        {
+            if (substitutoId == null)
+                throw new RegraNegocioException($"O cargo \"{cargo.Nome}\" está em uso ({servidores:N0} servidores, {diarias:N0} diárias, " +
+                    $"{valores.Count:N0} valores). Escolha o cargo que vai substituí-lo.");
+            if (substitutoId == id) throw new RegraNegocioException("Escolha um cargo diferente do que será excluído.");
+            substituto = await _db.Cargos.FindAsync(substitutoId.Value) ?? throw new RegraNegocioException("Cargo substituto não encontrado.");
+        }
+
+        await using var tx = await _db.Database.BeginTransactionAsync();
+        if (substituto != null)
+        {
+            foreach (var v in valores)
+            {
+                var duplicada = await _db.ValoresDiaria.AnyAsync(x => x.Id != v.Id && x.CargoId == substituto.Id && x.TipoDiariaId == v.TipoDiariaId
+                    && x.Vinculo == v.Vinculo && x.VigenciaInicio == v.VigenciaInicio);
+                if (duplicada) _db.ValoresDiaria.Remove(v); // o substituto já tem valor para o mesmo tipo/vínculo/vigência
+                else v.CargoId = substituto.Id;
+            }
+            foreach (var s in await _db.Servidores.Where(s => s.CargoId == id).ToListAsync()) s.CargoId = substituto.Id;
+            await _db.SaveChangesAsync();
+            // Diárias: cargo fotografado no lançamento; atualização em massa (pode ser dezenas de milhares) com um
+            // registro de auditoria resumindo a unificação.
+            await _db.Diarias.Where(d => d.CargoId == id).ExecuteUpdateAsync(u => u.SetProperty(d => d.CargoId, substituto.Id));
+            _db.Auditoria.Add(new Seap.Compartilhado.Auditoria.RegistroAuditoria
+            {
+                Modulo = DiariasContext.Modulo, Entidade = "cargo", EntidadeId = id.ToString(), RaizEntidade = "cargo", RaizId = id.ToString(),
+                Acao = "ALTERACAO", DataHora = DateTime.UtcNow,
+                Alteracoes = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?[]>
+                {
+                    ["UnificadoEm"] = new object?[] { cargo.Nome, substituto.Nome },
+                    ["DiariasTransferidas"] = new object?[] { null, diarias }
+                })
+            });
+        }
+        _db.Cargos.Remove(cargo);
+        await _db.SaveChangesAsync();
+        await tx.CommitAsync();
+        return substituto == null ? "Cargo excluído." : $"Cargo excluído; {servidores:N0} servidores e {diarias:N0} diárias passaram para \"{substituto.Nome}\".";
+    }
 
     public async Task<int> SalvarCargoAsync(int? id, CargoRequest req)
     {
@@ -87,8 +155,8 @@ public class CadastrosService
 
     // ---------- Tipos de diária ----------
     public Task<List<TipoDiariaDto>> TiposAsync(bool somenteAtivos) =>
-        _db.TiposDiaria.AsNoTracking().Where(t => !somenteAtivos || t.Ativo).OrderBy(t => t.Id)
-            .Select(t => new TipoDiariaDto(t.Id, t.Nome, t.Descricao, t.Ativo, t.ValorLivre)).ToListAsync();
+        _db.TiposDiaria.AsNoTracking().Where(t => !somenteAtivos || (t.Ativo && !t.ValorLivre)).OrderBy(t => t.Id)
+            .Select(t => new TipoDiariaDto(t.Id, t.Nome, t.Descricao, t.Ativo, t.ColunaMapa, t.ValorLivre)).ToListAsync();
 
     public async Task<int> SalvarTipoAsync(int? id, TipoDiariaRequest req)
     {
@@ -101,7 +169,12 @@ public class CadastrosService
         tipo.Nome = nome;
         tipo.Descricao = string.IsNullOrWhiteSpace(req.Descricao) ? null : req.Descricao.Trim();
         tipo.Ativo = req.Ativo;
-        tipo.ValorLivre = req.ValorLivre;
+        tipo.ColunaMapa = req.ColunaMapa switch
+        {
+            null or "" => tipo.ColunaMapa,
+            ColunasMapa.Integral or ColunasMapa.Parcial => req.ColunaMapa,
+            _ => throw new RegraNegocioException("Coluna da planilha da Controladoria inválida (INTEGRAL ou PARCIAL).")
+        };
         await _db.SaveChangesAsync();
         return tipo.Id;
     }

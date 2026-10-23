@@ -153,10 +153,8 @@ export default function Analises() {
         <label className="flex flex-col gap-1.5">
           <span className="rotulo">Situação</span>
           <select className="campo !w-56" value={filtros.situacao} onChange={(e) => atualizar({ situacao: e.target.value, 'drill.situacao': null, 'r.situacao': null })}>
-            <option value="VIGENTES">Pendentes e aprovadas</option>
-            <option value="APROVADA">Somente aprovadas</option>
-            <option value="PENDENTE">Somente pendentes</option>
-            <option value="TODAS">Todas (inclui canceladas)</option>
+            <option value="VIGENTES">Vigentes</option>
+            <option value="TODAS">Todas (inclui canceladas da versão anterior)</option>
           </select>
         </label>
         <label className="flex flex-col gap-1.5">

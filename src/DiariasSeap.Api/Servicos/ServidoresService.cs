@@ -13,7 +13,7 @@ public record ServidorListaDto(int Id, string Nome, string? Cpf, string? Matricu
 
 public record ServidorDto(int Id, string Nome, string? Cpf, string? Matricula, Vinculo Vinculo, int? CargoId, string? Cargo,
     int? UnidadeId, string? Unidade, int? PoliciaPenalId, string? Email, string? Celular, string? Banco, string? Agencia,
-    string? Conta, bool Ativo);
+    string? Conta, bool Ativo, string? MatriculaAntiga, bool LotacaoManual);
 
 public record ServidorRequest(string Nome, string Cpf, string? Matricula, Vinculo Vinculo, int? CargoId, int? UnidadeId,
     string? Email, string? Celular, string? Banco, string? Agencia, string? Conta, bool Ativo);
@@ -21,8 +21,9 @@ public record ServidorRequest(string Nome, string Cpf, string? Matricula, Vincul
 public record SincronizacaoResultado(int Criados, int Atualizados, int Vinculados, int IgnoradosSemCpf);
 
 /// <summary>
-/// Cadastro de servidores (comum.servidor). Policiais penais vêm de public.policia_penal: para eles
-/// nome, CPF, matrícula e lotação são somente leitura aqui e são atualizados pela sincronização.
+/// Cadastro de servidores (comum.servidor). Policiais penais vêm de public.policia_penal: para eles nome e CPF
+/// são somente leitura aqui e acompanham a Carteira. Matrícula (a nova, formato "1234567/01") e lotação podem
+/// ser editadas: a sincronização só preenche a matrícula quando vazia e não mexe em lotação alterada aqui.
 /// </summary>
 public class ServidoresService
 {
@@ -64,6 +65,7 @@ public class ServidoresService
         var digitos = CifraDelphi.SomenteDigitos(busca);
         return q.Where(s => EF.Functions.ILike(EF.Functions.Unaccent(s.Nome), EF.Functions.Unaccent(termo))
                             || EF.Functions.ILike(s.Matricula ?? "", termo)
+                            || EF.Functions.ILike(s.MatriculaAntiga ?? "", termo)
                             || (digitos.Length >= 3 && (s.Cpf ?? "").Contains(digitos)));
     }
 
@@ -71,7 +73,7 @@ public class ServidoresService
         await _db.Servidores.AsNoTracking().Where(s => s.Id == id)
             .Select(s => new ServidorDto(s.Id, s.Nome, s.Cpf, s.Matricula, s.Vinculo, s.CargoId,
                 s.Cargo != null ? s.Cargo.Nome : null, s.UnidadeId, s.Unidade != null ? s.Unidade.Nome : null,
-                s.PoliciaPenalId, s.Email, s.Celular, s.Banco, s.Agencia, s.Conta, s.Ativo))
+                s.PoliciaPenalId, s.Email, s.Celular, s.Banco, s.Agencia, s.Conta, s.Ativo, s.MatriculaAntiga, s.LotacaoManual))
             .FirstOrDefaultAsync()
         ?? throw new NaoEncontradoException("Servidor não encontrado.");
 
@@ -99,7 +101,7 @@ public class ServidoresService
         if (req.UnidadeId.HasValue && !await _db.Unidades.AnyAsync(u => u.Id == req.UnidadeId))
             throw new RegraNegocioException("Unidade inválida.");
 
-        // Policial penal: identificação e lotação pertencem ao cadastro da Carteira.
+        // Policial penal: nome e CPF pertencem ao cadastro da Carteira.
         if (s.PoliciaPenalId == null)
         {
             var cpf = CifraDelphi.SomenteDigitos(req.Cpf);
@@ -109,9 +111,10 @@ public class ServidoresService
                 throw new RegraNegocioException("Já existe servidor cadastrado com este CPF.");
             s.Nome = req.Nome.Trim().ToUpperInvariant();
             s.Cpf = cpf;
-            s.Matricula = Limpo(req.Matricula);
-            s.UnidadeId = req.UnidadeId;
         }
+        else if (s.UnidadeId != req.UnidadeId) s.LotacaoManual = true;
+        s.Matricula = Limpo(req.Matricula);
+        s.UnidadeId = req.UnidadeId;
 
         s.Vinculo = req.Vinculo;
         s.CargoId = req.CargoId;
@@ -128,8 +131,9 @@ public class ServidoresService
 
     /// <summary>
     /// Traz os policiais penais da Carteira para o cadastro de servidores: cria os que faltam (vínculo
-    /// Efetivo, cargo Policial Penal), vincula servidores já cadastrados com o mesmo CPF e atualiza
-    /// nome/matrícula/lotação/situação dos já vinculados. Idempotente.
+    /// Efetivo, cargo Policial Penal), vincula servidores já cadastrados com o mesmo CPF e atualiza nome e
+    /// situação dos já vinculados. A matrícula da Carteira (antiga) vai para MatriculaAntiga e só ocupa a
+    /// matrícula quando ela está vazia; a lotação acompanha a Carteira, salvo se alterada nas Diárias. Idempotente.
     /// </summary>
     public async Task<SincronizacaoResultado> SincronizarPoliciaisAsync()
     {
@@ -184,12 +188,16 @@ public class ServidoresService
             }
 
             var nome = p.Nome.Trim().ToUpperInvariant();
-            if (s.Id != 0 && s.Nome == nome && s.Matricula == p.Matricula && s.UnidadeId == p.UnidadeId && s.Ativo == ativo)
+            var matricula = s.Matricula ?? p.Matricula;
+            var unidade = s.LotacaoManual ? s.UnidadeId : p.UnidadeId;
+            if (s.Id != 0 && s.Nome == nome && s.Matricula == matricula && s.MatriculaAntiga == p.Matricula
+                && s.UnidadeId == unidade && s.Ativo == ativo)
                 continue;
             if (s.Id != 0 && !contado) atualizados++;
             s.Nome = nome;
-            s.Matricula = p.Matricula;
-            s.UnidadeId = p.UnidadeId;
+            s.Matricula = matricula;
+            s.MatriculaAntiga = p.Matricula;
+            s.UnidadeId = unidade;
             s.Ativo = ativo;
             s.AtualizadoEm = agora;
         }
