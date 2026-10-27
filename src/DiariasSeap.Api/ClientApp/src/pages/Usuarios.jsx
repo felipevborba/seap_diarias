@@ -108,7 +108,7 @@ export default function Usuarios() {
                       </td>
                       <td className="text-right whitespace-nowrap">
                         <button type="button" className="btn-icone" onClick={() => abrirEdicao(u)} aria-label={`Editar ${u.nome}`} title="Editar"><Icone nome="edit" /></button>
-                        {u.id !== eu && !u.administradorGeral && (
+                        {u.id !== eu && (
                           <button type="button" className="btn-icone hover:!text-error" onClick={() => setExcluir(u)} aria-label={`Excluir ${u.nome}`}
                             title={u.criadoPelasDiarias ? 'Excluir usuário' : 'Remover acesso às Diárias'}>
                             <Icone nome={u.criadoPelasDiarias ? 'delete' : 'person_remove'} />
@@ -159,7 +159,7 @@ export default function Usuarios() {
           <p className="font-body-md text-body-md">
             {excluir.criadoPelasDiarias
               ? <>O usuário <strong>{excluir.nome}</strong> foi cadastrado pelas Diárias e será excluído da base. As diárias que ele lançou continuam registradas com o nome dele.</>
-              : <>O usuário <strong>{excluir.nome}</strong> pertence ao sistema da Carteira. Ele perderá o acesso às Diárias, mas continuará entrando normalmente na Carteira.</>}
+              : <>O usuário <strong>{excluir.nome}</strong> pertence ao sistema da Carteira{excluir.administradorGeral ? ' (administrador geral)' : ''}. Ele perderá o acesso às Diárias, mas continuará entrando normalmente na Carteira. Para devolver o acesso, escolha um perfil para ele nesta tela.</>}
           </p>
         )}
       </Modal>

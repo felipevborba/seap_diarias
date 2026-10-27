@@ -396,7 +396,12 @@ export default function DiariaForm() {
                     </div>
 
                     {calc && (
-                      <div className="mt-3 pt-3 border-t border-outline-variant/60 flex justify-end gap-4 font-body-md text-body-md tabular">
+                      <div className="mt-3 pt-3 border-t border-outline-variant/60 flex flex-wrap justify-end gap-x-4 gap-y-1 font-body-md text-body-md tabular">
+                        {calc.faixaDestino && (
+                          <span className="mr-auto font-label-md text-label-md text-on-surface-variant" title="Tabela de Diárias Nacionais">
+                            Tabela: {calc.faixaDestino}{simulacao?.classeBeneficiario ? ` · classe ${simulacao.classeBeneficiario}` : ''}
+                          </span>
+                        )}
                         <span>Diárias {fmtMoeda(calc.valorTotal)}</span>
                         {calc.passagem && <span>Passagem {fmtMoeda(calc.passagem.valorTotal)}</span>}
                       </div>

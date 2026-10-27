@@ -13,10 +13,10 @@ public record ServidorListaDto(int Id, string Nome, string? Cpf, string? Matricu
 
 public record ServidorDto(int Id, string Nome, string? Cpf, string? Matricula, Vinculo Vinculo, int? CargoId, string? Cargo,
     int? UnidadeId, string? Unidade, int? PoliciaPenalId, string? Email, string? Celular, string? Banco, string? Agencia,
-    string? Conta, bool Ativo, string? MatriculaAntiga, bool LotacaoManual);
+    string? Conta, bool Ativo, string? MatriculaAntiga, bool LotacaoManual, short? ClasseBeneficiario, int ClasseEfetiva);
 
 public record ServidorRequest(string Nome, string Cpf, string? Matricula, Vinculo Vinculo, int? CargoId, int? UnidadeId,
-    string? Email, string? Celular, string? Banco, string? Agencia, string? Conta, bool Ativo);
+    string? Email, string? Celular, string? Banco, string? Agencia, string? Conta, bool Ativo, short? ClasseBeneficiario = null);
 
 public record SincronizacaoResultado(int Criados, int Atualizados, int Vinculados, int IgnoradosSemCpf);
 
@@ -69,13 +69,14 @@ public class ServidoresService
                             || (digitos.Length >= 3 && (s.Cpf ?? "").Contains(digitos)));
     }
 
-    public async Task<ServidorDto> ObterAsync(int id) =>
-        await _db.Servidores.AsNoTracking().Where(s => s.Id == id)
-            .Select(s => new ServidorDto(s.Id, s.Nome, s.Cpf, s.Matricula, s.Vinculo, s.CargoId,
-                s.Cargo != null ? s.Cargo.Nome : null, s.UnidadeId, s.Unidade != null ? s.Unidade.Nome : null,
-                s.PoliciaPenalId, s.Email, s.Celular, s.Banco, s.Agencia, s.Conta, s.Ativo, s.MatriculaAntiga, s.LotacaoManual))
-            .FirstOrDefaultAsync()
-        ?? throw new NaoEncontradoException("Servidor não encontrado.");
+    public async Task<ServidorDto> ObterAsync(int id)
+    {
+        var s = await _db.Servidores.AsNoTracking().Include(x => x.Cargo).Include(x => x.Unidade).FirstOrDefaultAsync(x => x.Id == id)
+                ?? throw new NaoEncontradoException("Servidor não encontrado.");
+        return new ServidorDto(s.Id, s.Nome, s.Cpf, s.Matricula, s.Vinculo, s.CargoId, s.Cargo?.Nome, s.UnidadeId, s.Unidade?.Nome,
+            s.PoliciaPenalId, s.Email, s.Celular, s.Banco, s.Agencia, s.Conta, s.Ativo, s.MatriculaAntiga, s.LotacaoManual,
+            s.ClasseBeneficiario, ClassesBeneficiario.Resolver(s.ClasseBeneficiario, s.Cargo?.ClasseBeneficiario, s.Vinculo));
+    }
 
     public async Task<int> CriarAsync(ServidorRequest req)
     {
@@ -96,6 +97,7 @@ public class ServidoresService
     private async Task Aplicar(Servidor s, ServidorRequest req)
     {
         if (!Enum.IsDefined(req.Vinculo)) throw new RegraNegocioException("Vínculo inválido.");
+        if (!ClassesBeneficiario.Valida(req.ClasseBeneficiario)) throw new RegraNegocioException("Classe de beneficiário inválida (1, 2 ou 3).");
         if (req.CargoId.HasValue && !await _db.Cargos.AnyAsync(c => c.Id == req.CargoId))
             throw new RegraNegocioException("Cargo inválido.");
         if (req.UnidadeId.HasValue && !await _db.Unidades.AnyAsync(u => u.Id == req.UnidadeId))
@@ -118,6 +120,7 @@ public class ServidoresService
 
         s.Vinculo = req.Vinculo;
         s.CargoId = req.CargoId;
+        s.ClasseBeneficiario = req.ClasseBeneficiario;
         s.Email = Limpo(req.Email);
         s.Celular = Limpo(req.Celular);
         s.Banco = Limpo(req.Banco);

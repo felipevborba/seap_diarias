@@ -3,7 +3,60 @@ import CampoData from '../components/ui/CampoData';
 import api from '../api';
 import { usePerfil } from '../components/layout/Layout';
 import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, Modal, Selo, Vazio, useAviso } from '../components/ui';
-import { VINCULOS, fmtData, fmtMoeda, hojeIso } from '../lib/formato';
+import { CLASSES_BENEFICIARIO, FAIXAS_DESTINO, VINCULOS, fmtData, fmtMoeda, hojeIso, rotuloFaixa } from '../lib/formato';
+
+/** Matriz no formato do Anexo do decreto: classes × integral/parcial nas linhas, faixas de destino nas colunas. */
+function TabelaNacional({ valores, admin, onEditar }) {
+  const hoje = hojeIso();
+  const oficiais = valores.filter((v) => v.classeBeneficiario && v.faixaDestino && !v.vinculo && !v.cargoId
+    && v.vigenciaInicio <= hoje && (!v.vigenciaFim || v.vigenciaFim >= hoje));
+  if (!oficiais.length) return null;
+  const tipos = [...new Set(oficiais.map((v) => v.tipoDiaria))].sort((a, b) => (a === 'Integral' ? -1 : b === 'Integral' ? 1 : a.localeCompare(b)));
+  const celula = (classe, tipo, faixa) => oficiais.find((v) => v.classeBeneficiario === classe && v.tipoDiaria === tipo && v.faixaDestino === faixa);
+  return (
+    <section className="cartao overflow-hidden mb-gutter-grid">
+      <div className="p-4 border-b border-outline-variant/60">
+        <h3 className="font-headline-sm text-headline-sm text-primary">Tabela de Diárias Nacionais</h3>
+        <p className="font-label-md text-label-md text-on-surface-variant">
+          Decreto Estadual nº 25.845/2003 · valores vigentes hoje. A faixa vem do município de destino; a classe, do servidor ou do cargo.
+          {admin ? ' Clique num valor para editar.' : ''}
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="tabela [&_th]:!whitespace-normal [&_td]:!px-3 [&_th]:!px-3">
+          <thead>
+            <tr>
+              <th rowSpan={2} className="align-bottom">Beneficiário</th>
+              <th rowSpan={2} className="align-bottom">Modalidade</th>
+              <th colSpan={3} className="text-center">Fora do estado · Grupo I</th>
+              <th className="text-center">Grupo II</th>
+              <th className="text-center">Dentro do estado · Grupo III</th>
+            </tr>
+            <tr>{FAIXAS_DESTINO.map((f) => <th key={f.valor} className="text-right !normal-case font-normal align-bottom min-w-[6.5rem] max-w-[10rem]">{f.rotulo}</th>)}</tr>
+          </thead>
+          <tbody>
+            {CLASSES_BENEFICIARIO.flatMap((c) => tipos.map((t, i) => (
+              <tr key={`${c.valor}-${t}`}>
+                {i === 0 && <td rowSpan={tipos.length} className="align-top"><div className="font-semibold">{c.rotulo}</div><div className="font-label-md text-label-md text-on-surface-variant max-w-[11rem]">{c.descricao}</div></td>}
+                <td className="font-semibold">{t}</td>
+                {FAIXAS_DESTINO.map((f) => {
+                  const v = celula(c.valor, t, f.valor);
+                  return (
+                    <td key={f.valor} className="text-right tabular whitespace-nowrap">
+                      {!v ? '—' : admin
+                        ? <button type="button" className="hover:underline text-primary font-semibold" onClick={() => onEditar(v)}>{fmtMoeda(v.valor)}</button>
+                        : fmtMoeda(v.valor)}
+                    </td>
+                  );
+                })}
+              </tr>
+            )))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 import { useCargos, useDados } from '../lib/useDados';
 
 export default function TabelaValores() {
@@ -21,6 +74,7 @@ export default function TabelaValores() {
     e.preventDefault();
     const corpo = {
       tipoDiariaId: Number(form.tipoDiariaId), vinculo: form.vinculo || null, cargoId: form.cargoId ? Number(form.cargoId) : null,
+      classeBeneficiario: form.classeBeneficiario ? Number(form.classeBeneficiario) : null, faixaDestino: form.faixaDestino || null,
       valor: Number(String(form.valor).replace(/\./g, '').replace(',', '.')), vigenciaInicio: form.vigenciaInicio, vigenciaFim: form.vigenciaFim || null,
     };
     const r = form.id ? await api.put(`/api/cadastros/valores/${form.id}`, corpo) : await api.post('/api/cadastros/valores', corpo);
@@ -28,6 +82,12 @@ export default function TabelaValores() {
     avisar(r.message);
     setForm(null);
     valores.recarregar();
+  };
+
+  const abrirValor = (v) => {
+    setErroForm('');
+    setForm({ ...v, vinculo: v.vinculo || '', cargoId: v.cargoId || '', classeBeneficiario: v.classeBeneficiario || '', faixaDestino: v.faixaDestino || '',
+      valor: String(v.valor).replace('.', ','), vigenciaFim: v.vigenciaFim || '' });
   };
 
   const excluirValor = async (v) => {
@@ -57,11 +117,13 @@ export default function TabelaValores() {
     <>
       <CabecalhoPagina
         titulo="Tabela de valores"
-        subtitulo="O valor da diária é preenchido automaticamente no lançamento pela linha vigente mais específica: cargo + vínculo, só cargo, só vínculo ou genérica."
-        acoes={admin && <button type="button" className="btn-primario" onClick={() => { setErroForm(''); setForm({ tipoDiariaId: tipos.dados?.[0]?.id || '', vinculo: '', cargoId: '', valor: '', vigenciaInicio: hojeIso(), vigenciaFim: '' }); }}>
+        subtitulo="O valor da diária é preenchido automaticamente no lançamento pela linha vigente mais específica: faixa de destino, classe do beneficiário, cargo e vínculo (nessa ordem de peso)."
+        acoes={admin && <button type="button" className="btn-primario" onClick={() => { setErroForm(''); setForm({ tipoDiariaId: tipos.dados?.[0]?.id || '', vinculo: '', cargoId: '', classeBeneficiario: '', faixaDestino: '', valor: '', vigenciaInicio: hojeIso(), vigenciaFim: '' }); }}>
           <Icone nome="add" /> Novo valor
         </button>}
       />
+
+      {valores.dados && <TabelaNacional valores={valores.dados} admin={admin} onEditar={(v) => abrirValor(v)} />}
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-gutter-grid">
         <section className="cartao overflow-hidden xl:col-span-2">
@@ -77,18 +139,20 @@ export default function TabelaValores() {
           ) : (
             <div className="overflow-x-auto">
               <table className="tabela">
-                <thead><tr><th>Tipo</th><th>Vínculo</th><th>Cargo</th><th className="text-right">Valor</th><th>Vigência</th>{admin && <th />}</tr></thead>
+                <thead><tr><th>Tipo</th><th>Classe</th><th>Destino</th><th>Vínculo</th><th>Cargo</th><th className="text-right">Valor</th><th>Vigência</th>{admin && <th />}</tr></thead>
                 <tbody>
                   {valores.dados.map((v) => (
                     <tr key={v.id}>
                       <td className="font-semibold">{v.tipoDiaria}</td>
+                      <td className="whitespace-nowrap">{v.classeBeneficiario ? `Classe ${v.classeBeneficiario}` : <span className="text-on-surface-variant">Qualquer</span>}</td>
+                      <td className="min-w-[10rem]">{rotuloFaixa(v.faixaDestino) || <span className="text-on-surface-variant">Qualquer</span>}</td>
                       <td>{v.vinculo || <span className="text-on-surface-variant">Qualquer</span>}</td>
                       <td>{v.cargo || <span className="text-on-surface-variant">Qualquer</span>}</td>
                       <td className="text-right tabular font-semibold">{fmtMoeda(v.valor)}</td>
                       <td className="whitespace-nowrap tabular">{fmtData(v.vigenciaInicio)} {v.vigenciaFim ? `a ${fmtData(v.vigenciaFim)}` : <Selo cor="verde">em diante</Selo>}</td>
                       {admin && (
                         <td className="text-right whitespace-nowrap">
-                          <button type="button" className="btn-icone" aria-label="Editar valor" onClick={() => { setErroForm(''); setForm({ ...v, vinculo: v.vinculo || '', cargoId: v.cargoId || '', valor: String(v.valor).replace('.', ','), vigenciaFim: v.vigenciaFim || '' }); }}><Icone nome="edit" /></button>
+                          <button type="button" className="btn-icone" aria-label="Editar valor" onClick={() => abrirValor(v)}><Icone nome="edit" /></button>
                           <button type="button" className="btn-icone hover:!text-error" aria-label="Excluir valor" onClick={() => excluirValor(v)}><Icone nome="delete" /></button>
                         </td>
                       )}
@@ -137,6 +201,16 @@ export default function TabelaValores() {
             <Campo rotulo="Tipo *" className="col-span-2">
               <select className="campo" required value={form.tipoDiariaId} onChange={(e) => setForm({ ...form, tipoDiariaId: e.target.value })}>
                 {(tipos.dados || []).map((t) => <option key={t.id} value={t.id}>{t.nome}</option>)}
+              </select>
+            </Campo>
+            <Campo rotulo="Classe do beneficiário">
+              <select className="campo" value={form.classeBeneficiario} onChange={(e) => setForm({ ...form, classeBeneficiario: e.target.value })}>
+                <option value="">Qualquer</option>{CLASSES_BENEFICIARIO.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
+              </select>
+            </Campo>
+            <Campo rotulo="Destino">
+              <select className="campo" value={form.faixaDestino} onChange={(e) => setForm({ ...form, faixaDestino: e.target.value })}>
+                <option value="">Qualquer</option>{FAIXAS_DESTINO.map((f) => <option key={f.valor} value={f.valor}>{f.grupo} – {f.rotulo}</option>)}
               </select>
             </Campo>
             <Campo rotulo="Vínculo">

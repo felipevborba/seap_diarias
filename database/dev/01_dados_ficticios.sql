@@ -1,6 +1,8 @@
 -- Dados fictícios para desenvolvimento local (NÃO rodar em produção).
 BEGIN;
 INSERT INTO tabnaturalidade (uf_id, nome) SELECT (SELECT id FROM tabuf WHERE sigla='PE'), m FROM (VALUES ('Recife'),('Olinda'),('Jaboatão dos Guararapes'),('Paulista'),('Igarassu'),('Itamaracá'),('Abreu e Lima'),('Vitória de Santo Antão'),('Caruaru'),('Garanhuns'),('Arcoverde'),('Santa Cruz do Capibaribe'),('Limoeiro'),('Palmares'),('Serra Talhada'),('Salgueiro'),('Petrolina'),('Araripina'),('Afogados da Ingazeira'),('Ouricuri')) v(m);
+-- Alguns destinos fora de PE, para as faixas da Tabela de Diárias Nacionais.
+INSERT INTO tabnaturalidade (uf_id, nome) SELECT (SELECT id FROM tabuf WHERE sigla=v.uf), v.m FROM (VALUES ('Brasília','DF'),('Manaus','AM'),('São Paulo','SP'),('Salvador','BA'),('Aracaju','SE'),('Juazeiro','BA'),('Feira de Santana','BA'),('Campina Grande','PB')) v(m, uf);
 INSERT INTO unidade (sigla, nome) VALUES ('CPFR','Colônia Penal Feminina do Recife'),('PAISJ','Presídio ASP Marcelo Francisco de Araújo'),('PIG','Presídio de Igarassu'),('PJPS','Penitenciária Juiz Plácido de Souza'),('PDEG','Penitenciária Dr. Edvaldo Gomes'),('CRA','Cadeia Pública de Arcoverde'),('SERES','Secretaria de Administração Penitenciária');
 -- Administrador geral: CPF 10433218100 / senha 123456 (principal='S' => ADMIN também nas Diárias)
 INSERT INTO usuario (principal, nome, matricula, documento, senha) VALUES ('S','Administrador Local','000001','10433218100','ZOV541');

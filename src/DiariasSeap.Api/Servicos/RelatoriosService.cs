@@ -113,7 +113,9 @@ public class RelatoriosService
     }
 
     private IQueryable<RelatorioLinhaDto> Projetar(IQueryable<DiariaItem> q) =>
-        q.OrderBy(i => i.Periodo.DataInicio).ThenBy(i => i.Periodo.Diaria.Servidor.Nome).ThenBy(i => i.Id)
+        // Mais recente primeiro: data da diária, depois data do cadastro (pedido da SEAP em 27/10/2026).
+        q.OrderByDescending(i => i.Periodo.DataInicio).ThenByDescending(i => i.Periodo.Diaria.CriadoEm)
+            .ThenBy(i => i.Periodo.Diaria.Servidor.Nome).ThenBy(i => i.Id)
             .Select(i => new RelatorioLinhaDto(
                 i.Periodo.DiariaId, i.Periodo.Diaria.LegadoCodigo, i.Periodo.Diaria.Origem,
                 i.Periodo.Diaria.Servidor.Nome, i.Periodo.Diaria.Servidor.Cpf, i.Periodo.Diaria.Servidor.Matricula,

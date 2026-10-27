@@ -19,6 +19,8 @@ public class Cargo : IAuditavel
     public int Id { get; set; }
     public string Nome { get; set; } = null!;
     public bool Ativo { get; set; } = true;
+    /// <summary>Classe de beneficiário de diárias (1, 2 ou 3) padrão para quem ocupa o cargo.</summary>
+    public short? ClasseBeneficiario { get; set; }
 }
 
 /// <summary>
@@ -41,6 +43,8 @@ public class Servidor : IAuditavel
     public int? UnidadeId { get; set; }
     /// <summary>Lotação alterada nas Diárias: a sincronização com a Carteira não a sobrescreve.</summary>
     public bool LotacaoManual { get; set; }
+    /// <summary>Classe de beneficiário de diárias (1, 2 ou 3); quando vazia vale a do cargo.</summary>
+    public short? ClasseBeneficiario { get; set; }
     public int? PoliciaPenalId { get; set; }
     public string? Email { get; set; }
     public string? Celular { get; set; }
@@ -101,4 +105,10 @@ public static class Perfis
     public const string Consulta = "CONSULTA";
 
     public static readonly string[] Todos = { Administrador, Operador, Consulta };
+
+    /// <summary>
+    /// Acesso ao módulo retirado explicitamente. Necessário para o administrador geral da Carteira (principal = 'S'),
+    /// que sem registro de perfil entraria como ADMIN; ele não pode ser apagado da base porque pertence à Carteira.
+    /// </summary>
+    public const string SemAcesso = "SEM_ACESSO";
 }

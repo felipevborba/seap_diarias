@@ -21,10 +21,10 @@ public record PassagemDto(string? Agencia, string? Categoria, DateOnly? DataIda,
 /// <summary>ValorTotal = só as diárias do período; a passagem vem à parte.</summary>
 public record PeriodoCalculadoDto(int? Id, DateOnly DataInicio, DateOnly DataFim, int Dias, int? OrigemMunicipioId, string Origem,
     string? OrigemTexto, int? DestinoMunicipioId, string Destino, string? DestinoTexto, bool IsentoSobreposicao,
-    List<ItemCalculadoDto> Itens, decimal ValorTotal, PassagemDto? Passagem);
+    List<ItemCalculadoDto> Itens, decimal ValorTotal, PassagemDto? Passagem, string? FaixaDestino = null);
 public record ConflitoDto(int DiariaId, DateOnly DataInicio, DateOnly DataFim, string Destino);
 public record SimulacaoDto(List<PeriodoCalculadoDto> Periodos, decimal ValorDiarias, decimal ValorPassagens, decimal ValorTotal,
-    List<string> Erros, List<ConflitoDto> Conflitos);
+    List<string> Erros, List<ConflitoDto> Conflitos, int? ClasseBeneficiario = null);
 
 public record DiariaFiltro(string? Busca, int? UnidadeId, DateOnly? DataInicio, DateOnly? DataFim, string? Situacao,
     string? Origem, int Page = 1, int PageSize = 20);
@@ -170,10 +170,11 @@ public class DiariasService
                 .FirstOrDefaultAsync(d => d.Id == diariaId)
             : null;
         var (vinculo, cargoId) = Snapshot(servidor, existente);
-        var (periodos, erros) = await CalcularAsync(req.Periodos, vinculo, cargoId, existente);
+        var classe = await ClasseAsync(servidor, vinculo, cargoId);
+        var (periodos, erros) = await CalcularAsync(req.Periodos, vinculo, cargoId, classe, existente);
         var conflitos = await ConflitosAsync(servidor.Id, periodos, diariaId);
         var (diarias, passagens) = Totais(periodos);
-        return new SimulacaoDto(periodos, diarias, passagens, diarias + passagens, erros, conflitos);
+        return new SimulacaoDto(periodos, diarias, passagens, diarias + passagens, erros, conflitos, classe);
     }
 
     private static (decimal Diarias, decimal Passagens) Totais(List<PeriodoCalculadoDto> periodos) =>
@@ -185,8 +186,16 @@ public class DiariasService
             ? (existente.Vinculo, existente.CargoId)
             : (servidor.Vinculo, servidor.CargoId);
 
+    /// <summary>Classe de beneficiário (Tabela de Diárias Nacionais): a do servidor, senão a do cargo da diária, senão pelo vínculo.</summary>
+    private async Task<int> ClasseAsync(Servidor servidor, Vinculo vinculo, int? cargoId)
+    {
+        var doCargo = cargoId == null ? null
+            : await _db.Cargos.AsNoTracking().Where(c => c.Id == cargoId).Select(c => c.ClasseBeneficiario).FirstOrDefaultAsync();
+        return ClassesBeneficiario.Resolver(servidor.ClasseBeneficiario, doCargo, vinculo);
+    }
+
     private async Task<(List<PeriodoCalculadoDto>, List<string>)> CalcularAsync(
-        List<PeriodoRequest> periodos, Vinculo vinculo, int? cargoId, Diaria? existente)
+        List<PeriodoRequest> periodos, Vinculo vinculo, int? cargoId, int classe, Diaria? existente)
     {
         var erros = new List<string>();
         var resultado = new List<PeriodoCalculadoDto>();
@@ -195,9 +204,10 @@ public class DiariasService
         var tipos = await _db.TiposDiaria.AsNoTracking().ToDictionaryAsync(t => t.Id);
         var destinoIds = periodos.SelectMany(p => new[] { p.DestinoMunicipioId, p.OrigemMunicipioId })
             .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
-        var destinos = await _db.Municipios.AsNoTracking().Where(m => destinoIds.Contains(m.Id))
-            .Select(m => new { m.Id, Nome = m.Nome + "/" + m.Uf.Sigla })
-            .ToDictionaryAsync(m => m.Id, m => m.Nome);
+        var municipios = await _db.Municipios.AsNoTracking().Where(m => destinoIds.Contains(m.Id))
+            .Select(m => new { m.Id, m.Nome, Uf = m.Uf.Sigla })
+            .ToDictionaryAsync(m => m.Id);
+        var destinos = municipios.ToDictionary(m => m.Key, m => $"{m.Value.Nome}/{m.Value.Uf}");
         var periodosAtuais = existente?.Periodos.ToDictionary(p => p.Id) ?? new();
 
         var ordenados = periodos.OrderBy(p => p.DataInicio).ToList();
@@ -229,6 +239,8 @@ public class DiariasService
             else if (atual?.OrigemTexto != null && atual.OrigemMunicipioId == null) origem = atual.OrigemTexto;
             else { erros.Add($"{rotulo}: selecione a cidade de origem."); continue; }
 
+            // Faixa do destino na Tabela de Diárias Nacionais (nula em período migrado sem município: vale a linha genérica).
+            var faixa = p.DestinoMunicipioId is { } idDestino ? FaixasDestino.De(municipios[idDestino].Nome, municipios[idDestino].Uf) : null;
             var dias = Dias(p.DataInicio, p.DataFim);
             var mesmasDatas = atual != null && atual.DataInicio == p.DataInicio && atual.DataFim == p.DataFim;
             var itensCalc = new List<ItemCalculadoDto>();
@@ -254,9 +266,10 @@ public class DiariasService
                 // Item que não mudou (mesmo tipo, mesma data de início) mantém o valor gravado.
                 decimal? unitario = itemAtual != null && itemAtual.TipoDiariaId == it.TipoDiariaId && atual!.DataInicio == p.DataInicio
                     ? itemAtual.ValorUnitario
-                    : await _valores.ResolverAsync(tipo.Id, vinculo, cargoId, p.DataInicio);
+                    : await _valores.ResolverAsync(tipo.Id, vinculo, cargoId, p.DataInicio, classe, faixa);
                 if (unitario == null)
-                    erros.Add($"{rotulo}: não há valor cadastrado para diária {tipo.Nome}, vínculo {vinculo} e o cargo do servidor nesta data. Ajuste a Tabela de Valores.");
+                    erros.Add($"{rotulo}: não há valor na Tabela de Valores para diária {tipo.Nome}, classe {classe}, {FaixasDestino.Rotulo(faixa)}, " +
+                              $"vínculo {vinculo} nesta data. Ajuste a Tabela de Valores.");
 
                 itensCalc.Add(new ItemCalculadoDto(it.Id, tipo.Id, tipo.Nome, quantidade, unitario ?? 0,
                     decimal.Round((unitario ?? 0) * quantidade, 2)));
@@ -269,7 +282,7 @@ public class DiariasService
 
             resultado.Add(new PeriodoCalculadoDto(p.Id, p.DataInicio, p.DataFim, dias, p.OrigemMunicipioId, origem, atual?.OrigemTexto,
                 p.DestinoMunicipioId, destino, atual?.DestinoTexto, mesmasDatas && atual!.IsentoSobreposicao, itensCalc,
-                itensCalc.Sum(x => x.ValorTotal), passagem));
+                itensCalc.Sum(x => x.ValorTotal), passagem, faixa == null ? null : FaixasDestino.Rotulo(faixa)));
         }
         return (resultado, erros);
     }
@@ -342,7 +355,7 @@ public class DiariasService
             throw new RegraNegocioException("Servidor inativo não pode receber novas diárias.");
 
         var (vinculo, cargoId) = Snapshot(servidor, diaria);
-        var (calculados, erros) = await CalcularAsync(req.Periodos, vinculo, cargoId, diaria);
+        var (calculados, erros) = await CalcularAsync(req.Periodos, vinculo, cargoId, await ClasseAsync(servidor, vinculo, cargoId), diaria);
         if (erros.Count > 0) throw new RegraNegocioException(string.Join(" ", erros));
 
         var conflitos = await ConflitosAsync(servidor.Id, calculados, id);

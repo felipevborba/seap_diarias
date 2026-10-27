@@ -52,12 +52,12 @@ else
     await using var c = new Npgsql.NpgsqlConnection(conexao);
     await c.OpenAsync();
     await using var cmd = new Npgsql.NpgsqlCommand(
-        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '005_ajustes_seap_passagens.sql'", c);
+        "SELECT count(*) FROM comum.schema_versao WHERE modulo = 'DIARIAS' AND script = '006_tabela_diarias_nacionais.sql'", c);
     long aplicado;
     try { aplicado = (long)(await cmd.ExecuteScalarAsync())!; } catch { aplicado = 0; }
     if (aplicado == 0)
     {
-        Log("ERRO — o banco ainda não tem o schema desta versão (005_ajustes_seap_passagens.sql). " +
+        Log("ERRO — o banco ainda não tem o schema desta versão (006_tabela_diarias_nacionais.sql). " +
             "Faça o deploy da API v2 antes de migrar (ou use --aplicar-schema em banco local).");
         return 3;
     }

@@ -48,6 +48,7 @@ public class AuthService
         var perfil = await _db.UsuariosPerfis.AsNoTracking()
             .Where(p => p.UsuarioId == usuario.Id && p.Modulo == DiariasContext.Modulo)
             .Select(p => p.Perfil).FirstOrDefaultAsync();
+        if (perfil == Perfis.SemAcesso) return null;
         return perfil ?? (usuario.EhAdministradorGeral ? Perfis.Administrador : null);
     }
 }
@@ -100,12 +101,12 @@ public class UsuariosService
                              || (digitos.Length > 0 && (x.u.Documento ?? "").Contains(digitos)));
         }
         if (somenteComAcesso)
-            q = q.Where(x => x.Perfil != null || x.u.Principal == 'S');
+            q = q.Where(x => x.Perfil != Perfis.SemAcesso && (x.Perfil != null || x.u.Principal == 'S'));
 
         var total = await q.CountAsync();
         var itens = await q.OrderBy(x => x.u.Nome).Skip((page - 1) * pageSize).Take(pageSize)
             .Select(x => new UsuarioDto(x.u.Id, x.u.Nome, x.u.Matricula, x.u.Documento, x.u.Principal == 'S',
-                x.Perfil ?? (x.u.Principal == 'S' ? Perfis.Administrador : null),
+                x.Perfil == Perfis.SemAcesso ? null : x.Perfil ?? (x.u.Principal == 'S' ? Perfis.Administrador : null),
                 _db.Auditoria.Any(a => a.Modulo == DiariasContext.Modulo && a.Entidade == "usuario" && a.Acao == "INCLUSAO"
                                        && a.EntidadeId == x.u.Id.ToString())))
             .ToListAsync();
@@ -123,6 +124,10 @@ public class UsuariosService
 
         var atual = await _db.UsuariosPerfis
             .FirstOrDefaultAsync(p => p.UsuarioId == usuarioId && p.Modulo == DiariasContext.Modulo);
+        var adminGeral = await _db.Usuarios.Where(u => u.Id == usuarioId).Select(u => u.Principal == 'S').FirstAsync();
+        if (perfil != Perfis.Administrador) await GarantirOutroAdministradorAsync(usuarioId);
+        // Administrador geral da Carteira sem perfil entraria como ADMIN: "sem acesso" fica registrado explicitamente.
+        if (perfil == null && adminGeral) perfil = Perfis.SemAcesso;
         if (perfil == null)
         {
             if (atual != null) _db.UsuariosPerfis.Remove(atual);
@@ -133,6 +138,18 @@ public class UsuariosService
             atual.Perfil = perfil;
 
         await _db.SaveChangesAsync();
+    }
+
+    /// <summary>Impede que a retirada de acesso deixe as Diárias sem nenhum administrador.</summary>
+    private async Task GarantirOutroAdministradorAsync(int usuarioId)
+    {
+        var admins = await (from u in _db.Usuarios
+                            join p in _db.UsuariosPerfis.Where(p => p.Modulo == DiariasContext.Modulo) on u.Id equals p.UsuarioId into pj
+                            from p in pj.DefaultIfEmpty()
+                            where p != null ? p.Perfil == Perfis.Administrador : u.Principal == 'S'
+                            select u.Id).ToListAsync();
+        if (admins.Count == 1 && admins[0] == usuarioId)
+            throw new RegraNegocioException("Este é o único administrador das Diárias: conceda o perfil de administrador a outro usuário antes.");
     }
 
     public async Task<int> CriarAsync(CriarUsuarioRequest req)
@@ -214,16 +231,25 @@ public class UsuariosService
     {
         if (id == usuarioLogadoId) throw new RegraNegocioException("Você não pode excluir o seu próprio usuário.");
         var usuario = await _db.Usuarios.FindAsync(id) ?? throw new NaoEncontradoException("Usuário não encontrado.");
-        if (usuario.EhAdministradorGeral)
-            throw new RegraNegocioException("O administrador geral da Carteira não pode ser excluído por aqui.");
+        await GarantirOutroAdministradorAsync(id);
 
         var idTexto = id.ToString();
         var criadoPelasDiarias = await _db.Auditoria.AnyAsync(a => a.Modulo == DiariasContext.Modulo && a.Entidade == "usuario"
                                                                    && a.EntidadeId == idTexto && a.Acao == "INCLUSAO");
         await using var tx = await _db.Database.BeginTransactionAsync();
         var perfil = await _db.UsuariosPerfis.FirstOrDefaultAsync(p => p.UsuarioId == id && p.Modulo == DiariasContext.Modulo);
-        if (perfil != null) _db.UsuariosPerfis.Remove(perfil);
-        if (criadoPelasDiarias) _db.Usuarios.Remove(usuario);
+        if (criadoPelasDiarias)
+        {
+            if (perfil != null) _db.UsuariosPerfis.Remove(perfil);
+            _db.Usuarios.Remove(usuario);
+        }
+        else if (usuario.EhAdministradorGeral)
+        {
+            // Administrador geral da Carteira: continua lá; aqui o acesso é bloqueado explicitamente.
+            if (perfil == null) _db.UsuariosPerfis.Add(new UsuarioPerfil { UsuarioId = id, Modulo = DiariasContext.Modulo, Perfil = Perfis.SemAcesso });
+            else perfil.Perfil = Perfis.SemAcesso;
+        }
+        else if (perfil != null) _db.UsuariosPerfis.Remove(perfil);
         await _db.SaveChangesAsync();
         _db.Auditoria.Add(new Seap.Compartilhado.Auditoria.RegistroAuditoria
         {

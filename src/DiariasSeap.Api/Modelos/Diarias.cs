@@ -33,6 +33,10 @@ public class ValorDiaria : IAuditavel
     public int TipoDiariaId { get; set; }
     public Vinculo? Vinculo { get; set; }
     public int? CargoId { get; set; }
+    /// <summary>Classe de beneficiário (1, 2, 3) da Tabela de Diárias Nacionais; nulo = qualquer.</summary>
+    public short? ClasseBeneficiario { get; set; }
+    /// <summary>Faixa de destino (<see cref="Servicos.FaixasDestino"/>); nulo = qualquer.</summary>
+    public string? FaixaDestino { get; set; }
     public decimal Valor { get; set; }
     public DateOnly VigenciaInicio { get; set; }
     public DateOnly? VigenciaFim { get; set; }

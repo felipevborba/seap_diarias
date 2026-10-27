@@ -1,0 +1,29 @@
+# Setores administrativos da SEAP usados como lotação no sistema legado (sigla_unidade_setor) que não existiam em
+# public.unidade (só havia as unidades prisionais). A migração cadastra os que faltarem (pela sigla).
+# Nome completo só onde é oficial (site da SEAP); nos demais fica a sigla, para a SEAP completar na tela Lotações.
+sigla	nome
+GAB	GABINETE
+COT	COT
+GAE	GAE
+GLC	GLC
+GGR	GGR
+GTI	GTI
+GEAPIS	GEAPIS
+GPO	GPO
+APPE	APPE
+GSP	GSP
+GISO	GISO
+GFA	GFA
+GGP	GGP
+GEE	GEE
+GGCG	GGCG
+GGPP	GGPP
+CCCS	CCCS
+CCP	CCP
+PRMO	PRMO
+PIG	PIG
+SEAPEN	SEAPEN
+STR	SUPERINTENDÊNCIA DE TRABALHO E RESSOCIALIZAÇÃO
+CEMEP	CENTRO DE MONITORAMENTO ELETRÔNICO DE PESSOAS
+PATRONATO	PATRONATO PENITENCIÁRIO DE PERNAMBUCO
+PLL	PRESÍDIO POLICIAL PENAL LEONARDO LAGO

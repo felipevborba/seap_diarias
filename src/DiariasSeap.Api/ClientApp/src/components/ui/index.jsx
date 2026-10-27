@@ -82,21 +82,51 @@ export function Selo({ cor = 'neutro', children }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-full font-label-md text-label-md whitespace-nowrap ${cores[cor]}`}>{children}</span>;
 }
 
+/** Páginas visíveis: a primeira, a última e uma janela em volta da atual, com "…" nos saltos (ex.: 1 … 4 5 6 7 8 … 20). */
+function paginasVisiveis(pagina, total, vizinhas = 2) {
+  const set = new Set([1, total]);
+  for (let p = pagina - vizinhas; p <= pagina + vizinhas; p++) if (p >= 1 && p <= total) set.add(p);
+  const ordenadas = [...set].sort((a, b) => a - b);
+  return ordenadas.flatMap((p, i) => (i > 0 && p - ordenadas[i - 1] > 1 ? ['…', p] : [p]));
+}
+
 export function Paginacao({ pagina, totalPaginas, totalItens, onMudar }) {
   if (!totalItens) return null;
+  const total = Math.max(totalPaginas, 1);
+  const ir = (p) => { if (p >= 1 && p <= total && p !== pagina) onMudar(p); };
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3 border-t border-outline-variant/60">
+    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-t border-outline-variant/60">
       <span className="font-label-md text-label-md text-on-surface-variant">
-        {totalItens} registro{totalItens === 1 ? '' : 's'} · página {pagina} de {Math.max(totalPaginas, 1)}
+        {totalItens.toLocaleString('pt-BR')} registro{totalItens === 1 ? '' : 's'} · página {pagina} de {total}
       </span>
-      <div className="flex gap-1">
-        <button type="button" className="btn-icone" disabled={pagina <= 1} onClick={() => onMudar(pagina - 1)} aria-label="Página anterior">
-          <Icone nome="chevron_left" />
-        </button>
-        <button type="button" className="btn-icone" disabled={pagina >= totalPaginas} onClick={() => onMudar(pagina + 1)} aria-label="Próxima página">
-          <Icone nome="chevron_right" />
-        </button>
-      </div>
+      {total > 1 && (
+        <nav className="flex items-center gap-1" aria-label="Paginação">
+          <button type="button" className="btn-icone" disabled={pagina <= 1} onClick={() => ir(1)} aria-label="Primeira página" title="Primeira página">
+            <Icone nome="first_page" />
+          </button>
+          <button type="button" className="btn-icone" disabled={pagina <= 1} onClick={() => ir(pagina - 1)} aria-label="Página anterior" title="Página anterior">
+            <Icone nome="chevron_left" />
+          </button>
+          <span className="hidden sm:flex items-center gap-1">
+            {paginasVisiveis(pagina, total).map((p, i) => (p === '…'
+              ? <span key={`e${i}`} className="px-1 text-on-surface-variant">…</span>
+              : (
+                <button key={p} type="button" onClick={() => ir(p)} aria-current={p === pagina ? 'page' : undefined} aria-label={`Página ${p}`}
+                  className={`min-w-[2.25rem] h-9 px-2 rounded-lg font-label-md text-label-md tabular transition-colors ${p === pagina
+                    ? 'bg-primary text-on-primary font-bold'
+                    : 'text-on-surface hover:bg-surface-container-high'}`}>
+                  {p.toLocaleString('pt-BR')}
+                </button>
+              )))}
+          </span>
+          <button type="button" className="btn-icone" disabled={pagina >= total} onClick={() => ir(pagina + 1)} aria-label="Próxima página" title="Próxima página">
+            <Icone nome="chevron_right" />
+          </button>
+          <button type="button" className="btn-icone" disabled={pagina >= total} onClick={() => ir(total)} aria-label="Última página" title="Última página">
+            <Icone nome="last_page" />
+          </button>
+        </nav>
+      )}
     </div>
   );
 }

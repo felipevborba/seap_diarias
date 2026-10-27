@@ -111,7 +111,8 @@ public class Migrador
         // 4. Deduplicação de lançamentos idênticos.
         var unicas = Deduplicar(legado);
 
-        // 5. Servidores, cargos, unidades, municípios, tipos.
+        // 5. Setores administrativos, servidores, cargos, unidades, municípios, tipos.
+        await GarantirSetoresAsync();
         var cargos = await GarantirCargosAsync(unicas);
         var servidorIds = await ResolverServidoresAsync(unicas, cargos);
         await AtualizarMatriculasAsync();
@@ -171,6 +172,7 @@ public class Migrador
             "SET LOCAL tcp_keepalives_idle = 30; SET LOCAL tcp_keepalives_interval = 10; SET LOCAL tcp_keepalives_count = 3; " +
             "SET LOCAL idle_in_transaction_session_timeout = '5min'");
         var matriculas = await AtualizarMatriculasAsync();
+        var lotacoes = await AtualizarLotacoesAsync();
 
         var linhas = CarregarLegado().Where(d => d.Passagem != null)
             .Select(d => new object?[] { d.Codigo, Texto.Cortar(d.Passagem!.Agencia, 200), Texto.Cortar(d.Passagem.Categoria, 100),
@@ -197,7 +199,38 @@ public class Migrador
         EscreverRelatorios();
         if (confirmar) { await tx.CommitAsync(); _log("ATUALIZAÇÃO CONFIRMADA (commit)."); }
         else { await tx.RollbackAsync(); _log("Ensaio concluído: nada foi gravado (use --confirmar para efetivar)."); }
-        return matriculas + n;
+        return matriculas + n + lotacoes;
+    }
+
+    /// <summary>
+    /// Lotação das diárias migradas pela regra atual (com os setores administrativos): só onde o texto do legado
+    /// identifica uma unidade e ela é diferente da gravada. Servidores criados a partir do legado (sem cadastro na
+    /// Carteira e sem lotação definida nas Diárias) recebem a lotação da diária mais recente.
+    /// </summary>
+    private async Task<int> AtualizarLotacoesAsync()
+    {
+        await GarantirSetoresAsync();
+        var unidades = await _db.Unidades.AsNoTracking().ToListAsync();
+        var linhas = Ler("diaria")
+            .Select(r => new object?[] { int.Parse(r["codigo"]!), Unidade(unidades, Texto.Limpo(r["sigla_unidade_setor"]) ?? Texto.Limpo(r["unidade"])) })
+            .Where(l => l[1] != null).ToList();
+        var conn = (NpgsqlConnection)_db.Database.GetDbConnection();
+        await _db.Database.ExecuteSqlRawAsync("CREATE TEMP TABLE unidade_legado (codigo int, unidade_id int) ON COMMIT DROP");
+        await CopiarAsync(conn, "unidade_legado", linhas, new[] { NpgsqlDbType.Integer, NpgsqlDbType.Integer });
+        var diarias = await _db.Database.ExecuteSqlRawAsync(
+            "UPDATE diarias.diaria d SET unidade_id = l.unidade_id FROM unidade_legado l " +
+            "WHERE d.legado_codigo = l.codigo AND d.origem = 'LEGADO' AND d.unidade_id IS DISTINCT FROM l.unidade_id");
+        var servidores = await _db.Database.ExecuteSqlRawAsync(
+            "UPDATE comum.servidor s SET unidade_id = r.unidade_id, atualizado_em = now() FROM (" +
+            "SELECT DISTINCT ON (d.servidor_id) d.servidor_id, d.unidade_id FROM diarias.diaria d " +
+            "WHERE d.unidade_id IS NOT NULL ORDER BY d.servidor_id, d.criado_em DESC) r " +
+            "WHERE r.servidor_id = s.id AND s.origem = 'LEGADO' AND s.policia_penal_id IS NULL AND NOT s.lotacao_manual " +
+            "AND s.unidade_id IS DISTINCT FROM r.unidade_id");
+        foreach (var (texto, qtd) in _lotacoesSemUnidade.OrderByDescending(x => x.Value))
+            Relatar("lotacoes_sem_unidade.tsv", texto, qtd.ToString());
+        _log($"Lotações: {diarias:N0} diárias migradas e {servidores:N0} servidores do legado com a lotação atualizada " +
+             $"({_lotacoesSemUnidade.Values.Sum():N0} diárias com texto não identificado — relatório lotacoes_sem_unidade.tsv).");
+        return diarias;
     }
 
     /// <summary>Códigos do legado cujas diárias migradas foram excluídas no sistema novo (pela auditoria).</summary>
@@ -458,17 +491,64 @@ public class Migrador
         return id;
     }
 
-    private static int? BuscarUnidade(List<Unidade> unidades, string? texto)
+    private Dictionary<string, string>? _correcoesLotacao;
+
+    /// <summary>De-para de textos de lotação do legado que a regra automática não resolve (correcoes_lotacao.tsv).</summary>
+    private Dictionary<string, string> CorrecoesLotacao() => _correcoesLotacao ??=
+        File.ReadLines(Path.Combine(AppContext.BaseDirectory, "correcoes_lotacao.tsv"))
+            .Where(l => l.Length > 0 && !l.StartsWith('#') && !l.StartsWith("texto\t"))
+            .Select(l => l.Split('\t')).Where(p => p.Length >= 2)
+            .GroupBy(p => Texto.Chave(p[0])).ToDictionary(g => g.Key, g => g.Last()[1].Trim());
+
+    /// <summary>
+    /// "SEAP - GP/NP-SALGUEIRO", "SEAP / PDAD - SEGURANÇA", "SEAPEN/COT": descarta os prefixos de órgão/gerência e procura
+    /// a sigla (texto inteiro, depois a primeira palavra), o de-para e, por fim, "NP CIDADE" no nome do núcleo prisional.
+    /// </summary>
+    private int? BuscarUnidade(List<Unidade> unidades, string? texto)
     {
-        // "SEAP - GP/NP-SALGUEIRO", "SEAP / PTAC": descarta os prefixos de órgão/gerência.
         var chave = Texto.Chave(texto);
-        foreach (var prefixo in new[] { "SEAP ", "GP " })
-            if (chave.StartsWith(prefixo) && chave.Length > prefixo.Length) chave = chave[prefixo.Length..];
+        bool mudou;
+        do
+        {
+            mudou = false;
+            foreach (var prefixo in new[] { "SEAP ", "SEAPEN ", "GP ", "NP " })
+                if (chave.StartsWith(prefixo) && chave.Length > prefixo.Length) { chave = chave[prefixo.Length..]; mudou = true; }
+        } while (mudou);
         if (chave.Length == 0) return null;
-        var alternativas = new[] { chave, chave.Replace(" 2", " II"), chave.Replace(" ", "") };
-        var u = unidades.FirstOrDefault(x => alternativas.Contains(Texto.Chave(x.Sigla)) || alternativas.Contains(Texto.Chave(x.Sigla).Replace(" ", "")))
-             ?? unidades.FirstOrDefault(x => chave.StartsWith("NP ") && Texto.Chave(x.Nome).EndsWith(chave[3..]));
-        return u?.Id;
+
+        var porSigla = unidades.Where(u => !string.IsNullOrWhiteSpace(u.Sigla))
+            .GroupBy(u => Texto.Chave(u.Sigla).Replace(" ", "")).ToDictionary(g => g.Key, g => g.First().Id);
+        int? Sigla(string s) => porSigla.TryGetValue(Texto.Chave(s).Replace(" ", ""), out var id) ? id : null;
+
+        if (CorrecoesLotacao().TryGetValue(chave, out var alvo)) return Sigla(alvo);
+        var encontrada = Sigla(chave) ?? Sigla(chave.Replace(" 2", " II"));
+        if (encontrada != null) return encontrada;
+        var primeira = chave.Split(' ')[0];
+        if (CorrecoesLotacao().TryGetValue(primeira, out alvo)) return Sigla(alvo);
+        encontrada = Sigla(primeira);
+        if (encontrada != null) return encontrada;
+        return unidades.FirstOrDefault(x => Texto.Chave(x.Nome).StartsWith("NUCLEO PRISIONAL") && Texto.Chave(x.Nome).EndsWith(" " + chave))?.Id;
+    }
+
+    /// <summary>
+    /// Cadastra em public.unidade (compartilhada com a Carteira) os setores administrativos da SEAP usados como lotação no
+    /// legado e que ainda não existem (setores_seap.tsv; comparação pela sigla). Antes só havia as unidades prisionais.
+    /// </summary>
+    private async Task<int> GarantirSetoresAsync()
+    {
+        var existentes = (await _db.Unidades.AsNoTracking().Select(u => u.Sigla).ToListAsync())
+            .Where(s => s != null).Select(s => Texto.Chave(s).Replace(" ", "")).ToHashSet();
+        var novos = 0;
+        foreach (var p in File.ReadLines(Path.Combine(AppContext.BaseDirectory, "setores_seap.tsv"))
+                     .Where(l => l.Length > 0 && !l.StartsWith('#') && !l.StartsWith("sigla\t")).Select(l => l.Split('\t')))
+        {
+            if (!existentes.Add(Texto.Chave(p[0]).Replace(" ", ""))) continue;
+            _db.Unidades.Add(new Unidade { Sigla = p[0].Trim(), Nome = p[1].Trim() });
+            novos++;
+        }
+        await _db.SaveChangesAsync();
+        _log($"Setores administrativos da SEAP: {novos} cadastrados como lotação (setores_seap.tsv).");
+        return novos;
     }
 
     private async Task<Dictionary<(string Nome, string Uf), int>> CarregarMunicipiosAsync()

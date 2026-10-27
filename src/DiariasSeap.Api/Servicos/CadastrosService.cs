@@ -6,18 +6,19 @@ using Seap.Compartilhado.Respostas;
 
 namespace DiariasSeap.Api.Servicos;
 
-public record CargoDto(int Id, string Nome, bool Ativo, int Servidores, int Diarias, int Valores);
-public record CargoRequest(string Nome, bool Ativo);
+public record CargoDto(int Id, string Nome, bool Ativo, int Servidores, int Diarias, int Valores, short? ClasseBeneficiario = null);
+public record CargoRequest(string Nome, bool Ativo, short? ClasseBeneficiario = null);
 public record RegiaoDto(int Id, string Nome, List<MunicipioDto> Municipios);
 public record RegiaoRequest(string Nome, List<int> MunicipioIds);
 /// <summary>Obsoleto = tipo "valor livre" da versão 004 (passagem como diária); não aparece mais no lançamento.</summary>
 public record TipoDiariaDto(int Id, string Nome, string? Descricao, bool Ativo, string ColunaMapa, bool Obsoleto);
 public record TipoDiariaRequest(string Nome, string? Descricao, bool Ativo, string? ColunaMapa = null);
 public record ValorDiariaDto(int Id, int TipoDiariaId, string TipoDiaria, Vinculo? Vinculo, int? CargoId, string? Cargo,
-    decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim);
+    decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim, short? ClasseBeneficiario, string? FaixaDestino);
 public record LotacaoDto(int Id, string? Sigla, string Nome, int Policiais, int Servidores, int Diarias);
 public record LotacaoRequest(string? Sigla, string Nome);
-public record ValorDiariaRequest(int TipoDiariaId, Vinculo? Vinculo, int? CargoId, decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim);
+public record ValorDiariaRequest(int TipoDiariaId, Vinculo? Vinculo, int? CargoId, decimal Valor, DateOnly VigenciaInicio, DateOnly? VigenciaFim,
+    short? ClasseBeneficiario = null, string? FaixaDestino = null);
 
 /// <summary>Cadastros de apoio: cargos e regiões (schema comum) e tipos/valores de diária (schema diarias).</summary>
 public class CadastrosService
@@ -30,12 +31,12 @@ public class CadastrosService
     public async Task<List<CargoDto>> CargosAsync(bool somenteAtivos)
     {
         var cargos = await _db.Cargos.AsNoTracking().Where(c => !somenteAtivos || c.Ativo).OrderBy(c => c.Nome).ToListAsync();
-        if (somenteAtivos) return cargos.Select(c => new CargoDto(c.Id, c.Nome, c.Ativo, 0, 0, 0)).ToList();
+        if (somenteAtivos) return cargos.Select(c => new CargoDto(c.Id, c.Nome, c.Ativo, 0, 0, 0, c.ClasseBeneficiario)).ToList();
         var servidores = await Contagem(_db.Servidores.Where(s => s.CargoId != null).GroupBy(s => s.CargoId!.Value));
         var diarias = await Contagem(_db.Diarias.Where(d => d.CargoId != null).GroupBy(d => d.CargoId!.Value));
         var valores = await Contagem(_db.ValoresDiaria.Where(v => v.CargoId != null).GroupBy(v => v.CargoId!.Value));
         return cargos.Select(c => new CargoDto(c.Id, c.Nome, c.Ativo, servidores.GetValueOrDefault(c.Id),
-            diarias.GetValueOrDefault(c.Id), valores.GetValueOrDefault(c.Id))).ToList();
+            diarias.GetValueOrDefault(c.Id), valores.GetValueOrDefault(c.Id), c.ClasseBeneficiario)).ToList();
     }
 
     private static Task<Dictionary<int, int>> Contagem<T>(IQueryable<IGrouping<int, T>> grupos) =>
@@ -106,8 +107,10 @@ public class CadastrosService
         var cargo = id.HasValue
             ? await _db.Cargos.FindAsync(id.Value) ?? throw new NaoEncontradoException("Cargo não encontrado.")
             : _db.Cargos.Add(new Cargo()).Entity;
+        if (!ClassesBeneficiario.Valida(req.ClasseBeneficiario)) throw new RegraNegocioException("Classe de beneficiário inválida (1, 2 ou 3).");
         cargo.Nome = nome;
         cargo.Ativo = req.Ativo;
+        cargo.ClasseBeneficiario = req.ClasseBeneficiario;
         await _db.SaveChangesAsync();
         return cargo.Id;
     }
@@ -239,10 +242,10 @@ public class CadastrosService
         var q = _db.ValoresDiaria.AsNoTracking().AsQueryable();
         if (tipoDiariaId.HasValue) q = q.Where(v => v.TipoDiariaId == tipoDiariaId);
         if (somenteVigentes) q = q.Where(v => v.VigenciaFim == null || v.VigenciaFim >= hoje);
-        return q.OrderBy(v => v.TipoDiaria.Nome).ThenBy(v => v.Vinculo).ThenBy(v => v.Cargo!.Nome)
-            .ThenByDescending(v => v.VigenciaInicio)
+        return q.OrderBy(v => v.TipoDiaria.Nome).ThenBy(v => v.ClasseBeneficiario).ThenBy(v => v.FaixaDestino)
+            .ThenBy(v => v.Vinculo).ThenBy(v => v.Cargo!.Nome).ThenByDescending(v => v.VigenciaInicio)
             .Select(v => new ValorDiariaDto(v.Id, v.TipoDiariaId, v.TipoDiaria.Nome, v.Vinculo, v.CargoId,
-                v.Cargo != null ? v.Cargo.Nome : null, v.Valor, v.VigenciaInicio, v.VigenciaFim))
+                v.Cargo != null ? v.Cargo.Nome : null, v.Valor, v.VigenciaInicio, v.VigenciaFim, v.ClasseBeneficiario, v.FaixaDestino))
             .ToListAsync();
     }
 
@@ -258,6 +261,9 @@ public class CadastrosService
         if (req.Vinculo.HasValue && !Enum.IsDefined(req.Vinculo.Value)) throw new RegraNegocioException("Vínculo inválido.");
         if (!await _db.TiposDiaria.AnyAsync(t => t.Id == req.TipoDiariaId)) throw new RegraNegocioException("Tipo inválido.");
         if (req.CargoId.HasValue && !await _db.Cargos.AnyAsync(c => c.Id == req.CargoId)) throw new RegraNegocioException("Cargo inválido.");
+        if (!ClassesBeneficiario.Valida(req.ClasseBeneficiario)) throw new RegraNegocioException("Classe de beneficiário inválida (1, 2 ou 3).");
+        var faixa = string.IsNullOrWhiteSpace(req.FaixaDestino) ? null : req.FaixaDestino;
+        if (faixa != null && !FaixasDestino.Todas.Contains(faixa)) throw new RegraNegocioException("Faixa de destino inválida.");
 
         var valor = id.HasValue
             ? await _db.ValoresDiaria.FindAsync(id.Value) ?? throw new NaoEncontradoException("Valor não encontrado.")
@@ -265,6 +271,8 @@ public class CadastrosService
         valor.TipoDiariaId = req.TipoDiariaId;
         valor.Vinculo = req.Vinculo;
         valor.CargoId = req.CargoId;
+        valor.ClasseBeneficiario = req.ClasseBeneficiario;
+        valor.FaixaDestino = faixa;
         valor.Valor = decimal.Round(req.Valor, 2);
         valor.VigenciaInicio = req.VigenciaInicio;
         valor.VigenciaFim = req.VigenciaFim;
@@ -284,8 +292,9 @@ public class CadastrosService
 }
 
 /// <summary>
-/// Resolve o valor unitário da diária: entre as linhas vigentes na data para o tipo, vale a mais específica
-/// (cargo+vínculo, depois só cargo, depois só vínculo, depois genérica).
+/// Resolve o valor unitário da diária: entre as linhas vigentes na data para o tipo, vale a mais específica.
+/// Peso: faixa de destino 8, classe do beneficiário 4, cargo 2, vínculo 1 (linhas da Tabela de Diárias Nacionais,
+/// com classe e faixa, prevalecem sobre as genéricas antigas).
 /// </summary>
 public class TabelaValores
 {
@@ -293,17 +302,21 @@ public class TabelaValores
 
     public TabelaValores(DiariasContext db) => _db = db;
 
-    public async Task<decimal?> ResolverAsync(int tipoDiariaId, Vinculo vinculo, int? cargoId, DateOnly data)
+    public async Task<decimal?> ResolverAsync(int tipoDiariaId, Vinculo vinculo, int? cargoId, DateOnly data,
+        int? classe = null, string? faixa = null)
     {
         var candidatos = await _db.ValoresDiaria.AsNoTracking()
             .Where(v => v.TipoDiariaId == tipoDiariaId
                         && v.VigenciaInicio <= data && (v.VigenciaFim == null || v.VigenciaFim >= data)
                         && (v.Vinculo == null || v.Vinculo == vinculo)
-                        && (v.CargoId == null || v.CargoId == cargoId))
+                        && (v.CargoId == null || v.CargoId == cargoId)
+                        && (v.ClasseBeneficiario == null || v.ClasseBeneficiario == classe)
+                        && (v.FaixaDestino == null || v.FaixaDestino == faixa))
             .ToListAsync();
 
         return candidatos
-            .OrderByDescending(v => (v.CargoId != null ? 2 : 0) + (v.Vinculo != null ? 1 : 0))
+            .OrderByDescending(v => (v.FaixaDestino != null ? 8 : 0) + (v.ClasseBeneficiario != null ? 4 : 0)
+                                    + (v.CargoId != null ? 2 : 0) + (v.Vinculo != null ? 1 : 0))
             .Select(v => (decimal?)v.Valor)
             .FirstOrDefault();
     }

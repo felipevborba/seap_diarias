@@ -57,6 +57,24 @@ export const VINCULOS = [
   { valor: 'Outro', rotulo: 'Outro' },
 ];
 
+// Tabela de Diárias Nacionais (Decreto Estadual nº 25.845/2003): classe do beneficiário e faixa de destino.
+export const CLASSES_BENEFICIARIO = [
+  { valor: 1, rotulo: 'Classe 1', descricao: 'Secretários de Estado, Secretários Executivos, presidentes de entidades' },
+  { valor: 2, rotulo: 'Classe 2', descricao: 'Dirigentes, cargos em comissão, chefia/assessoramento e nível superior' },
+  { valor: 3, rotulo: 'Classe 3', descricao: 'Demais servidores' },
+];
+export const FAIXAS_DESTINO = [
+  { valor: 'CAPITAIS', grupo: 'Grupo I', rotulo: 'Capitais brasileiras (exceto Recife)' },
+  { valor: 'BRASILIA_MANAUS', grupo: 'Grupo I', rotulo: 'Brasília e Manaus' },
+  { valor: 'CAPITAIS_ESPECIAIS', grupo: 'Grupo I', rotulo: 'SP, RJ, BH, Porto Alegre, Belém e Fortaleza' },
+  { valor: 'DEMAIS_FORA', grupo: 'Grupo II', rotulo: 'Demais cidades fora do estado' },
+  { valor: 'ESTADO', grupo: 'Grupo III', rotulo: 'Recife e interior de PE, SE, AL, PB, RN e Juazeiro-BA' },
+];
+export const rotuloFaixa = (v) => {
+  const f = FAIXAS_DESTINO.find((x) => x.valor === v);
+  return f ? `${f.grupo} – ${f.rotulo}` : null;
+};
+
 export const PERFIS = [
   { valor: 'ADMIN', rotulo: 'Administrador', descricao: 'Tudo, inclusive usuários, valores e cadastros de apoio' },
   { valor: 'OPERADOR', rotulo: 'Operador', descricao: 'Lança, edita e exclui diárias; mantém servidores' },

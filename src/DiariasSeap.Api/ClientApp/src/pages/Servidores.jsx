@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import api from '../api';
 import { Permitido, usePerfil } from '../components/layout/Layout';
 import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, Modal, Paginacao, Selo, Vazio, useAviso } from '../components/ui';
-import { VINCULOS, fmtCpf, mascaraCpf } from '../lib/formato';
+import { CLASSES_BENEFICIARIO, VINCULOS, fmtCpf, mascaraCpf } from '../lib/formato';
 import { useCargos, useDados, useUnidades } from '../lib/useDados';
 
 const VAZIO = { nome: '', cpf: '', matricula: '', vinculo: 'Efetivo', cargoId: '', unidadeId: '', email: '', celular: '', banco: '', agencia: '', conta: '', ativo: true };
@@ -26,12 +26,12 @@ export default function Servidores() {
     setErroForm('');
     if (!id) { setForm({ ...VAZIO }); return; }
     const r = await api.get(`/api/servidores/${id}`);
-    if (r.success) setForm({ ...r.data, cpf: r.data.cpf ? fmtCpf(r.data.cpf) : '', cargoId: r.data.cargoId || '', unidadeId: r.data.unidadeId || '' });
+    if (r.success) setForm({ ...r.data, cpf: r.data.cpf ? fmtCpf(r.data.cpf) : '', cargoId: r.data.cargoId || '', unidadeId: r.data.unidadeId || '', classeBeneficiario: r.data.classeBeneficiario || '' });
   };
 
   const salvar = async (e) => {
     e.preventDefault();
-    const corpo = { ...form, cargoId: form.cargoId || null, unidadeId: form.unidadeId || null };
+    const corpo = { ...form, cargoId: form.cargoId || null, unidadeId: form.unidadeId || null, classeBeneficiario: form.classeBeneficiario ? Number(form.classeBeneficiario) : null };
     const r = form.id ? await api.put(`/api/servidores/${form.id}`, corpo) : await api.post('/api/servidores', corpo);
     if (!r.success) { setErroForm(r.message); return; }
     avisar(r.message);
@@ -163,6 +163,13 @@ export default function Servidores() {
               <Campo rotulo="Cargo">
                 <select className="campo" value={form.cargoId} onChange={set('cargoId')}>
                   <option value="">Não informado</option>{cargos.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                </select>
+              </Campo>
+              <Campo rotulo="Classe nas diárias" className="sm:col-span-2"
+                dica={form.id && !form.classeBeneficiario ? `Hoje: classe ${form.classeEfetiva} (pelo cargo ou vínculo)` : 'Tabela de Diárias Nacionais (Decreto 25.845/2003)'}>
+                <select className="campo" value={form.classeBeneficiario || ''} onChange={set('classeBeneficiario')}>
+                  <option value="">Pelo cargo / vínculo</option>
+                  {CLASSES_BENEFICIARIO.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo} – {c.descricao}</option>)}
                 </select>
               </Campo>
               <Campo rotulo="Lotação" className="sm:col-span-2" dica={policial && form.lotacaoManual ? 'Definida nas Diárias (a sincronização não altera)' : undefined}>

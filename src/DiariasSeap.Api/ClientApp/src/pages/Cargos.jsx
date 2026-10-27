@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import api from '../api';
 import { Alerta, CabecalhoPagina, Campo, Carregando, Icone, Modal, Selo, Vazio, useAviso } from '../components/ui';
-import { fmtNumero } from '../lib/formato';
+import { CLASSES_BENEFICIARIO, fmtNumero } from '../lib/formato';
 import { useDados } from '../lib/useDados';
 
 // Exclusão de cargo em uso pede um substituto: serve para unificar cadastros duplicados vindos do legado
@@ -18,7 +18,8 @@ export default function Cargos() {
 
   const salvar = async (e) => {
     e.preventDefault();
-    const r = form.id ? await api.put(`/api/cadastros/cargos/${form.id}`, form) : await api.post('/api/cadastros/cargos', form);
+    const corpo = { ...form, classeBeneficiario: form.classeBeneficiario ? Number(form.classeBeneficiario) : null };
+    const r = form.id ? await api.put(`/api/cadastros/cargos/${form.id}`, corpo) : await api.post('/api/cadastros/cargos', corpo);
     if (!r.success) { setErroForm(r.message); return; }
     avisar(r.message);
     setForm(null);
@@ -45,7 +46,7 @@ export default function Cargos() {
       <CabecalhoPagina
         titulo="Cargos"
         subtitulo="Usados no cadastro de servidores e na tabela de valores. Compartilhados com os demais módulos."
-        acoes={<button type="button" className="btn-primario" onClick={() => { setErroForm(''); setForm({ nome: '', ativo: true }); }}><Icone nome="add" /> Novo cargo</button>}
+        acoes={<button type="button" className="btn-primario" onClick={() => { setErroForm(''); setForm({ nome: '', ativo: true, classeBeneficiario: '' }); }}><Icone nome="add" /> Novo cargo</button>}
       />
       <Alerta className="mb-4">{erro}</Alerta>
       <div className="cartao overflow-hidden max-w-4xl">
@@ -55,16 +56,17 @@ export default function Cargos() {
         {carregando && !dados ? <Carregando /> : !lista.length ? <Vazio icone="work" texto="Nenhum cargo encontrado." /> : (
           <div className="overflow-x-auto">
             <table className="tabela">
-              <thead><tr><th>Nome</th><th className="text-right">Servidores</th><th className="text-right">Diárias</th><th>Situação</th><th /></tr></thead>
+              <thead><tr><th>Nome</th><th>Classe (diárias)</th><th className="text-right">Servidores</th><th className="text-right">Diárias</th><th>Situação</th><th /></tr></thead>
               <tbody>
                 {lista.map((c) => (
                   <tr key={c.id}>
                     <td className="font-semibold">{c.nome}</td>
+                    <td className="whitespace-nowrap">{c.classeBeneficiario ? `Classe ${c.classeBeneficiario}` : <span className="text-on-surface-variant">Pelo vínculo</span>}</td>
                     <td className="text-right tabular">{fmtNumero(c.servidores)}</td>
                     <td className="text-right tabular">{fmtNumero(c.diarias)}</td>
                     <td>{c.ativo ? <Selo cor="verde">Ativo</Selo> : <Selo>Inativo</Selo>}</td>
                     <td className="text-right whitespace-nowrap">
-                      <button type="button" className="btn-icone" aria-label={`Editar ${c.nome}`} onClick={() => { setErroForm(''); setForm({ ...c }); }}><Icone nome="edit" /></button>
+                      <button type="button" className="btn-icone" aria-label={`Editar ${c.nome}`} onClick={() => { setErroForm(''); setForm({ ...c, classeBeneficiario: c.classeBeneficiario || '' }); }}><Icone nome="edit" /></button>
                       <button type="button" className="btn-icone hover:!text-error" aria-label={`Excluir ${c.nome}`} title={emUso(c) ? 'Excluir e passar os registros para outro cargo' : 'Excluir'}
                         onClick={() => { setErroExcluir(''); setExcluir({ cargo: c, substitutoId: '' }); }}><Icone nome="delete" /></button>
                     </td>
@@ -83,6 +85,12 @@ export default function Cargos() {
           <form id="form-cargo" onSubmit={salvar} className="flex flex-col gap-form-element-gap">
             <Alerta>{erroForm}</Alerta>
             <Campo rotulo="Nome *"><input className="campo" required value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></Campo>
+            <Campo rotulo="Classe na Tabela de Diárias Nacionais" dica="Sem classe: 3 para contratados e 2 para os demais vínculos. O servidor pode ter classe própria.">
+              <select className="campo" value={form.classeBeneficiario} onChange={(e) => setForm({ ...form, classeBeneficiario: e.target.value })}>
+                <option value="">Pelo vínculo do servidor</option>
+                {CLASSES_BENEFICIARIO.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo} – {c.descricao}</option>)}
+              </select>
+            </Campo>
             <label className="flex items-center gap-2">
               <input type="checkbox" className="rounded border-outline text-primary focus:ring-primary" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} />
               <span className="font-body-md text-body-md">Ativo</span>
