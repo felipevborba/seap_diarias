@@ -5607,7 +5607,9 @@ JOIN LATERAL (
 ) achado ON achado.id IS NOT NULL
 ORDER BY achado.id, i.codigo;
 
--- 2. Acrescenta os que faltam, já com o código IBGE.
+-- 2. Acrescenta os que faltam, já com o código IBGE. Os municípios da Carteira foram carregados com ids explícitos e
+--    a sequência ficou para trás (em produção: sequência em 32, maior id 252): realinha antes de inserir.
+SELECT setval(pg_get_serial_sequence('public.tabnaturalidade', 'id'), (SELECT COALESCE(max(id), 0) + 1 FROM public.tabnaturalidade), false);
 WITH novos AS (
     INSERT INTO public.tabnaturalidade (uf_id, nome)
     SELECT u.id, i.nome
