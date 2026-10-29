@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!-- PJES SEAP (Central de Custódia): terceiro sistema no mesmo servidor e banco do CarteiraPenal (4443) e das
+       Diárias (4444), publicado em pjes.seap.pe.gov.br -> servidor:4445. Compartilha Seap.Compartilhado
+       (identidade, auditoria, versionamento de schema, tabelas comuns). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Seap.Compartilhado\Seap.Compartilhado.csproj" />
+  </ItemGroup>
+
+</Project>
