@@ -25,6 +25,10 @@ public class Migrador
     private readonly Dictionary<string, List<string[]>> _relatorios = new();
     private readonly Action<string> _log;
     private readonly bool _forcar;
+    /// <summary>Diárias migradas editadas no sistema novo, mantidas como estão (ids).</summary>
+    private List<int> _preservadas = new();
+    /// <summary>Número (id) atual de cada diária já migrada, por código do legado, para regravar com o mesmo número.</summary>
+    private Dictionary<int, int> _idPorCodigo = new();
 
     public Migrador(DiariasContext db, string dirDados, string dirRelatorio, Action<string> log, bool forcar = false)
     {
@@ -93,16 +97,29 @@ public class Migrador
         }
 
         // 3. Remove migração anterior (idempotência) — mas nunca por cima de trabalho feito no sistema novo:
-        //    diária migrada que já foi editada/aprovada/rejeitada/cancelada tem registro de auditoria.
-        var mexidas = await _db.Database.SqlQueryRaw<int>(
-            "SELECT count(*)::int AS \"Value\" FROM diarias.diaria d WHERE d.origem = 'LEGADO' AND EXISTS (" +
-            "SELECT 1 FROM comum.auditoria a WHERE a.modulo = 'DIARIAS' AND a.raiz_entidade = 'diaria' AND a.raiz_id = d.id::text)")
-            .SingleAsync();
-        if (mexidas > 0 && !_forcar)
-            throw new InvalidOperationException($"{mexidas} diárias migradas já foram alteradas no sistema novo; reexecutar apagaria esse " +
-                "trabalho. Migração interrompida (use --forcar somente se tiver certeza).");
-        var apagadas = await _db.Database.ExecuteSqlRawAsync("DELETE FROM diarias.diaria WHERE origem = 'LEGADO'");
-        if (apagadas > 0) _log($"Migração anterior removida: {apagadas:N0} diárias.");
+        //    diária migrada que já foi editada no sistema novo tem registro de auditoria e é PRESERVADA (fica como está e
+        //    o código dela no legado é pulado). --forcar reimporta inclusive essas, descartando as edições.
+        var editadas = await _db.Diarias.AsNoTracking()
+            .Where(d => d.Origem == Origens.Legado && d.LegadoCodigo != null
+                        && _db.Auditoria.Any(a => a.Modulo == DiariasContext.Modulo && a.RaizEntidade == "diaria" && a.RaizId == d.Id.ToString()))
+            .Select(d => new { d.Id, Codigo = d.LegadoCodigo!.Value }).ToListAsync();
+        if (_forcar) editadas.Clear();
+        _preservadas = editadas.Select(e => e.Id).ToList();
+        if (editadas.Count > 0)
+        {
+            var codigos = editadas.Select(e => e.Codigo).ToHashSet();
+            foreach (var d in legado.Where(d => codigos.Contains(d.Codigo)))
+                Relatar("preservadas_editadas_no_sistema_novo.tsv", d.Codigo.ToString(), editadas.First(e => e.Codigo == d.Codigo).Id.ToString(), d.Nome ?? "");
+            legado = legado.Where(d => !codigos.Contains(d.Codigo)).ToList();
+            _log($"Diárias migradas editadas no sistema novo (preservadas, código do legado pulado): {editadas.Count:N0} " +
+                 "(relatório preservadas_editadas_no_sistema_novo.tsv)");
+        }
+        // Mesmo número para quem já estava migrado (os usuários já se referem a elas pelo nº da diária).
+        _idPorCodigo = await _db.Diarias.AsNoTracking().Where(d => d.Origem == Origens.Legado && d.LegadoCodigo != null && !_preservadas.Contains(d.Id))
+            .ToDictionaryAsync(d => d.LegadoCodigo!.Value, d => d.Id);
+        var preservadasSql = _preservadas.Count == 0 ? "" : $" AND id NOT IN ({string.Join(",", _preservadas)})";
+        var apagadas = await _db.Database.ExecuteSqlRawAsync("DELETE FROM diarias.diaria WHERE origem = 'LEGADO'" + preservadasSql);
+        if (apagadas > 0) _log($"Migração anterior removida: {apagadas:N0} diárias (serão regravadas com o mesmo número).");
         // Ensaios desfeitos consomem a sequência (nextval não volta no rollback); realinha para numerar sem saltos.
         await _db.Database.ExecuteSqlRawAsync(
             "SELECT setval('diarias.diaria_id_seq', COALESCE((SELECT max(id) FROM diarias.diaria), 0) + 1, false), " +
@@ -660,7 +677,11 @@ public class Migrador
         int integral, int parcial, Dictionary<string, string> cadastradores, HashSet<int> isentos)
     {
         var servidores = await _db.Servidores.AsNoTracking().ToDictionaryAsync(s => s.Id, s => s.UnidadeId);
-        var ids = await ProximosIdsAsync(conn, "diarias.diaria_id_seq", diarias.Count);
+        // Já migradas mantêm o número; só as novas do legado consomem a sequência.
+        var novosIds = new Queue<int>(await ProximosIdsAsync(conn, "diarias.diaria_id_seq", diarias.Count(d => !_idPorCodigo.ContainsKey(d.Codigo))));
+        var ids = diarias.Select(d => _idPorCodigo.TryGetValue(d.Codigo, out var id) ? id : novosIds.Dequeue()).ToList();
+        var mantidos = diarias.Count(d => _idPorCodigo.ContainsKey(d.Codigo));
+        _log($"Numeração: {mantidos:N0} diárias mantêm o número anterior; {diarias.Count - mantidos:N0} novas do legado recebem número novo.");
         var idsPeriodo = await ProximosIdsAsync(conn, "diarias.diaria_periodo_id_seq", diarias.Count);
         var semMunicipio = new Dictionary<string, int>();
 
@@ -782,13 +803,14 @@ public class Migrador
         var esperadoItens = legado.Sum(d => d.IntTotal + d.ParTotal);
         var esperado = esperadoItens + legado.Sum(d => d.Passagem?.Total ?? 0);
         var porSituacaoLegado = legado.GroupBy(d => d.Status).ToDictionary(g => g.Key, g => g.Count());
-        var gravado = await _db.Diarias.Where(d => d.Origem == Origens.Legado)
+        // Conferência só do que esta migração gravou (as preservadas ficaram de fora do legado lido).
+        var gravado = await _db.Diarias.Where(d => d.Origem == Origens.Legado && !_preservadas.Contains(d.Id))
             .GroupBy(_ => 1).Select(g => new { Qtd = g.Count(), Valor = g.Sum(d => d.ValorTotal) }).FirstAsync();
         var itens = await _db.Database.SqlQueryRaw<decimal>(
             "SELECT COALESCE(sum(i.valor_total), 0) AS \"Value\" FROM diarias.diaria_item i " +
             "JOIN diarias.diaria_periodo p ON p.id = i.periodo_id JOIN diarias.diaria d ON d.id = p.diaria_id " +
-            "WHERE d.origem = 'LEGADO'").SingleAsync();
-        var porSituacao = await _db.Diarias.Where(d => d.Origem == Origens.Legado).GroupBy(d => d.Situacao)
+            "WHERE d.origem = 'LEGADO'" + (_preservadas.Count == 0 ? "" : $" AND d.id NOT IN ({string.Join(",", _preservadas)})")).SingleAsync();
+        var porSituacao = await _db.Diarias.Where(d => d.Origem == Origens.Legado && !_preservadas.Contains(d.Id)).GroupBy(d => d.Situacao)
             .Select(g => new { g.Key, Qtd = g.Count() }).ToDictionaryAsync(x => x.Key, x => x.Qtd);
 
         var ok = gravado.Qtd == legado.Count && gravado.Valor == esperado && itens == esperadoItens;
@@ -814,6 +836,7 @@ public class Migrador
             ["diarias_nao_migradas.tsv"] = "codigo\tmotivo\tservidor",
             ["datas_futuras_suspeitas.tsv"] = "codigo\tservidor\tida\tvolta\tdata_cadastro",
             ["excluidas_no_sistema_novo.tsv"] = "codigo\tservidor\tida",
+            ["preservadas_editadas_no_sistema_novo.tsv"] = "codigo_legado\tdiaria\tservidor",
             ["matriculas_atualizadas.tsv"] = "servidor\tcpf\tmatricula_anterior\tmatricula_nova",
             ["servidores_sem_matricula_nova.tsv"] = "servidor\tcpf\tmatricula",
             ["matriculas_conflitantes.tsv"] = "servidor_sem_cpf\tmatricula_mantida\tmatricula_nova_ja_usada",
