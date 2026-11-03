@@ -21,7 +21,8 @@ string? Arg(string nome) => args.SkipWhile(a => a != nome).Skip(1).FirstOrDefaul
 var conexao = Environment.GetEnvironmentVariable("ConnectionStrings__DefaultConnection");
 // VPN instável: keepalive TCP faz a queda de rede falhar em segundos, em vez de travar a transação por minutos.
 if (!string.IsNullOrWhiteSpace(conexao))
-    conexao = new Npgsql.NpgsqlConnectionStringBuilder(conexao) { KeepAlive = 15, TcpKeepAlive = true, Timeout = 30 }.ConnectionString;
+    // CommandTimeout: também vale para o COPY em massa (padrão de 30 s é pouco para ~106 mil diárias em produção).
+    conexao = new Npgsql.NpgsqlConnectionStringBuilder(conexao) { KeepAlive = 15, TcpKeepAlive = true, Timeout = 30, CommandTimeout = 900 }.ConnectionString;
 var dados = Arg("--dados");
 var confirmar = args.Contains("--confirmar");
 var relatorios = Arg("--relatorios") ?? Path.Combine(Directory.GetCurrentDirectory(), $"relatorio_migracao_{DateTime.Now:yyyyMMdd_HHmmss}");

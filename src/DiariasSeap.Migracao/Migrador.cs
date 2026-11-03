@@ -115,14 +115,18 @@ public class Migrador
                  "(relatório preservadas_editadas_no_sistema_novo.tsv)");
         }
         // Mesmo número para quem já estava migrado (os usuários já se referem a elas pelo nº da diária).
+        // Só código e número (projeção): trazer as diárias inteiras pela VPN era lento e frágil.
         _idPorCodigo = await _db.Diarias.AsNoTracking().Where(d => d.Origem == Origens.Legado && d.LegadoCodigo != null && !_preservadas.Contains(d.Id))
-            .ToDictionaryAsync(d => d.LegadoCodigo!.Value, d => d.Id);
+            .Select(d => new { Codigo = d.LegadoCodigo!.Value, d.Id })
+            .ToDictionaryAsync(d => d.Codigo, d => d.Id);
         var preservadasSql = _preservadas.Count == 0 ? "" : $" AND id NOT IN ({string.Join(",", _preservadas)})";
         var apagadas = await _db.Database.ExecuteSqlRawAsync("DELETE FROM diarias.diaria WHERE origem = 'LEGADO'" + preservadasSql);
         if (apagadas > 0) _log($"Migração anterior removida: {apagadas:N0} diárias (serão regravadas com o mesmo número).");
         // Ensaios desfeitos consomem a sequência (nextval não volta no rollback); realinha para numerar sem saltos.
+        // Números novos começam depois do maior em uso OU reservado para regravar uma diária já migrada.
+        var maiorReservado = _idPorCodigo.Count == 0 ? 0 : _idPorCodigo.Values.Max();
         await _db.Database.ExecuteSqlRawAsync(
-            "SELECT setval('diarias.diaria_id_seq', COALESCE((SELECT max(id) FROM diarias.diaria), 0) + 1, false), " +
+            $"SELECT setval('diarias.diaria_id_seq', GREATEST(COALESCE((SELECT max(id) FROM diarias.diaria), 0), {maiorReservado}) + 1, false), " +
             "setval('diarias.diaria_periodo_id_seq', COALESCE((SELECT max(id) FROM diarias.diaria_periodo), 0) + 1, false)");
 
         // 4. Deduplicação de lançamentos idênticos.
@@ -429,8 +433,12 @@ public class Migrador
         var existentes = await _db.Servidores.ToListAsync();
         var porCpf = existentes.Where(s => s.Cpf != null).ToDictionary(s => s.Cpf!);
         // Matrícula comparada só pelos dígitos: depois de AtualizarMatriculasAsync ela fica no formato "1234567/01".
-        var porMatriculaSemCpf = existentes.Where(s => s.Cpf == null && s.Matricula != null)
-            .GroupBy(s => Texto.Matricula(s.Matricula)).ToDictionary(g => g.Key, g => g.First());
+        // Servidor sem CPF é reconhecido pela matrícula atual ou pela anterior (a migração pode ter trocado a matrícula
+        // antiga do legado pela nova, com outros dígitos, via de-para consultamatricula).
+        var porMatriculaSemCpf = existentes.Where(s => s.Cpf == null)
+            .SelectMany(s => new[] { s.Matricula, s.MatriculaAntiga }.Where(m => m != null).Select(m => (Chave: Texto.Matricula(m), Servidor: s)))
+            .Where(x => x.Chave.Length > 0)
+            .GroupBy(x => x.Chave).ToDictionary(g => g.Key, g => g.First().Servidor);
         var policiais = await _db.PoliciaisPenais.AsNoTracking().Select(p => new { p.Id, p.Cpf, p.Matricula }).ToListAsync();
         var cpfPorMatriculaCarteira = policiais.Where(p => Texto.Cpf(p.Cpf) != null && !string.IsNullOrEmpty(p.Matricula))
             .GroupBy(p => Texto.Matricula(p.Matricula)).ToDictionary(g => g.Key, g => Texto.Cpf(g.First().Cpf)!);
@@ -785,6 +793,7 @@ public class Migrador
     private static async Task CopiarAsync(NpgsqlConnection conn, string destino, List<object?[]> linhas, NpgsqlDbType[] tipos)
     {
         await using var copy = await conn.BeginBinaryImportAsync($"COPY {destino} FROM STDIN (FORMAT BINARY)");
+        copy.Timeout = TimeSpan.FromMinutes(15);
         foreach (var linha in linhas)
         {
             await copy.StartRowAsync();
