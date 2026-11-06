@@ -62,6 +62,7 @@ public record UsuarioDto(int Id, string Nome, string? Matricula, string? Cpf, bo
 public record DefinirPerfilRequest(string? Perfil);
 public record CriarUsuarioRequest(string Nome, string Cpf, string? Matricula, string Senha, string Perfil);
 public record EditarUsuarioRequest(string Nome, string Cpf, string? Matricula, string? NovaSenha, string? Perfil);
+public record AlterarSenhaRequest(string SenhaAtual, string NovaSenha);
 public record ExclusaoUsuarioDto(bool RemovidoDoBanco, string Mensagem);
 
 /// <summary>
@@ -225,6 +226,29 @@ public class UsuariosService
         await tx.CommitAsync();
         if (req.Perfil != null || id != usuarioLogadoId)
             await DefinirPerfilAsync(id, string.IsNullOrEmpty(req.Perfil) ? null : req.Perfil, usuarioLogadoId);
+    }
+
+    /// <summary>O próprio usuário troca a senha, confirmando a atual. A senha é a mesma da Carteira.</summary>
+    public async Task AlterarPropriaSenhaAsync(int usuarioId, AlterarSenhaRequest req)
+    {
+        var usuario = await _db.Usuarios.FindAsync(usuarioId) ?? throw new NaoEncontradoException("Usuário não encontrado.");
+        // Erro de regra, não 401: o front trata 401 como sessão expirada e derrubaria o login.
+        if (string.IsNullOrWhiteSpace(req.SenhaAtual) || CifraDelphi.Criptografar(req.SenhaAtual) != usuario.Senha)
+            throw new RegraNegocioException("A senha atual não confere.");
+        // A cifra ignora espaços nas pontas: é o tamanho sem eles que conta.
+        if (string.IsNullOrWhiteSpace(req.NovaSenha) || req.NovaSenha.Trim().Length < 6)
+            throw new RegraNegocioException("A senha deve ter ao menos 6 caracteres.");
+        var nova = CifraDelphi.Criptografar(req.NovaSenha);
+        if (nova == usuario.Senha) throw new RegraNegocioException("A nova senha deve ser diferente da atual.");
+
+        usuario.Senha = nova;
+        _db.Auditoria.Add(new Seap.Compartilhado.Auditoria.RegistroAuditoria
+        {
+            Modulo = DiariasContext.Modulo, Entidade = "usuario", EntidadeId = usuarioId.ToString(), RaizEntidade = "usuario", RaizId = usuarioId.ToString(),
+            Acao = "ALTERACAO", UsuarioId = _usuarioAtual.Id, UsuarioNome = _usuarioAtual.Nome, DataHora = DateTime.UtcNow,
+            Alteracoes = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?> { ["Senha"] = new { de = "***", para = "*** (alterada pelo próprio usuário)" } })
+        });
+        await _db.SaveChangesAsync();
     }
 
     public async Task<ExclusaoUsuarioDto> ExcluirAsync(int id, int? usuarioLogadoId)

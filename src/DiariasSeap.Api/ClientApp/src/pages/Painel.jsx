@@ -9,7 +9,7 @@ import { FiltroPeriodo, periodoParaFiltro } from '../components/ui/FiltroPeriodo
 import { fmtMoeda, fmtNumero } from '../lib/formato';
 
 export default function Painel() {
-  const [periodo, setPeriodo] = useState({ preset: 'ano', base: 'diaria', de: '', ate: '', ano: '', mes: '' });
+  const [periodo, setPeriodo] = useState({ preset: 'mes', base: 'cadastro', de: '', ate: '', ano: '', mes: '' });
   const filtro = useMemo(() => periodoParaFiltro(periodo), [periodo]);
   const chave = JSON.stringify(filtro);
   const [d, setD] = useState(null);

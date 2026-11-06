@@ -131,7 +131,7 @@ export default function Relatorios() {
       {dados && (
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-gutter-grid mb-4">
           <Indicador rotulo="Valor total" valor={fmtMoeda(dados.totais.valorTotal)} />
-          <Indicador rotulo="Diárias" valor={fmtNumero(dados.totais.diarias)} />
+          <Indicador rotulo="Lançamentos" valor={fmtNumero(dados.totais.diarias)} />
           <Indicador rotulo="Servidores" valor={fmtNumero(dados.totais.servidores)} />
           <Indicador rotulo="Quantidade de diárias" valor={fmtNumero(dados.totais.quantidade)} />
         </div>

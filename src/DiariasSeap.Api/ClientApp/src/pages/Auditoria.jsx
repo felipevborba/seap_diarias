@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import CampoData from '../components/ui/CampoData';
 import { Link } from 'react-router-dom';
 import { Alerta, CabecalhoPagina, Carregando, Icone, Paginacao, Selo, Vazio } from '../components/ui';
-import { fmtDataHora } from '../lib/formato';
+import { fmtCpf, fmtDataHora } from '../lib/formato';
 import { useDados } from '../lib/useDados';
 
 const ENTIDADES = {
   diaria: 'Diária', diaria_periodo: 'Período de diária', servidor: 'Servidor', valor_diaria: 'Tabela de valores',
-  tipo_diaria: 'Tipo de diária', cargo: 'Cargo', regiao: 'Região', usuario_perfil: 'Acesso de usuário',
+  tipo_diaria: 'Tipo de diária', cargo: 'Cargo', regiao: 'Região', usuario_perfil: 'Acesso de usuário', usuario: 'Usuário',
 };
 const ACOES = { INCLUSAO: ['Inclusão', 'verde'], ALTERACAO: ['Alteração', 'azul'], EXCLUSAO: ['Exclusão', 'vermelho'] };
 
@@ -59,6 +59,11 @@ export default function Auditoria() {
                         <td><Selo cor={cor}>{rotulo}</Selo></td>
                         <td className="whitespace-nowrap">
                           {ENTIDADES[a.entidade] || a.entidade} #{a.entidadeId}
+                          {(a.servidorMatricula || a.servidorCpf) && (
+                            <div className="font-label-md text-label-md text-on-surface-variant">
+                              {a.servidorMatricula ? `Mat. ${a.servidorMatricula}` : `CPF ${fmtCpf(a.servidorCpf)}`}
+                            </div>
+                          )}
                           {a.raizEntidade === 'diaria' && (
                             <div><Link className="font-label-md text-label-md text-primary hover:underline" to={`/diarias/${a.raizId}`}>Diária nº {a.raizId}</Link></div>
                           )}

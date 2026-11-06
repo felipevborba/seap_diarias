@@ -35,7 +35,7 @@ public record DashboardDto(RelatorioTotaisDto Totais, List<SerieDto> PorRegiao, 
 
 public record AuditoriaFiltro(string? Entidade, string? Usuario, DateOnly? DataInicio, DateOnly? DataFim, int Page = 1, int PageSize = 50);
 public record AuditoriaDto(long Id, string Entidade, string EntidadeId, string RaizEntidade, string RaizId, string Acao,
-    string? UsuarioNome, DateTime DataHora, JsonElement Alteracoes);
+    string? UsuarioNome, DateTime DataHora, JsonElement Alteracoes, string? ServidorMatricula, string? ServidorCpf);
 
 /// <summary>
 /// Relatórios por item de diária (uma linha por período × tipo, ex.: "2 Integrais" e "1 Parcial" da mesma viagem).
@@ -435,8 +435,15 @@ public class RelatoriosService
 
         var total = await q.CountAsync();
         var itens = await q.OrderByDescending(a => a.Id).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
-        return new PagedResult<AuditoriaDto>(itens.Select(a => new AuditoriaDto(a.Id, a.Entidade, a.EntidadeId, a.RaizEntidade,
-            a.RaizId, a.Acao, a.UsuarioNome, a.DataHora, JsonDocument.Parse(a.Alteracoes).RootElement.Clone())).ToList(),
-            page, pageSize, total);
+        // Registros de servidor mostram matrícula ou CPF (o número interno não diz quem é).
+        var idsServidor = itens.Where(a => a.Entidade == "servidor").Select(a => int.TryParse(a.EntidadeId, out var n) ? n : 0).Distinct().ToList();
+        var servidores = await _db.Servidores.AsNoTracking().Where(s => idsServidor.Contains(s.Id))
+            .Select(s => new { s.Id, s.Matricula, s.Cpf }).ToDictionaryAsync(s => s.Id.ToString());
+        return new PagedResult<AuditoriaDto>(itens.Select(a =>
+        {
+            var servidor = a.Entidade == "servidor" ? servidores.GetValueOrDefault(a.EntidadeId) : null;
+            return new AuditoriaDto(a.Id, a.Entidade, a.EntidadeId, a.RaizEntidade, a.RaizId, a.Acao, a.UsuarioNome, a.DataHora,
+                JsonDocument.Parse(a.Alteracoes).RootElement.Clone(), servidor?.Matricula, servidor?.Cpf);
+        }).ToList(), page, pageSize, total);
     }
 }

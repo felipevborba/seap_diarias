@@ -76,6 +76,12 @@ export default function DiariaForm() {
   const [carregando, setCarregando] = useState(editando);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
+  // Última diária lançada nesta tela: os dados da missão ficam para o próximo servidor.
+  const [lancada, setLancada] = useState(null);
+
+  useEffect(() => {
+    if (lancada) document.getElementById('servidor')?.focus({ preventScroll: true });
+  }, [lancada]);
 
   useEffect(() => {
     if (!editando) return;
@@ -203,8 +209,23 @@ export default function DiariaForm() {
     const r = editando ? await api.put(`/api/diarias/${id}`, requisicao) : await api.post('/api/diarias', requisicao);
     setSalvando(false);
     if (!r.success) { setErro(r.message); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
-    avisar(r.message);
-    navigate(`/diarias/${editando ? id : r.data}`);
+    if (editando) {
+      avisar(r.message);
+      navigate(`/diarias/${id}`);
+      return;
+    }
+    // Vários servidores na mesma missão: só o servidor muda no próximo lançamento.
+    setLancada({ id: r.data, servidor: servidor.nome });
+    setServidor(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const comecarEmBranco = () => {
+    setLancada(null);
+    setObjetivo('');
+    setProcessoSei('');
+    setObservacao('');
+    setPeriodos([novoPeriodo(null, tipos[0]?.id)]);
   };
 
   if (carregando) return <Carregando />;
@@ -222,6 +243,15 @@ export default function DiariaForm() {
       />
 
       <Alerta className="mb-4">{erro}</Alerta>
+      {lancada && (
+        <Alerta tipo="sucesso" className="mb-4">
+          <p>
+            Diária <Link className="underline font-semibold" to={`/diarias/${lancada.id}`}>nº {lancada.id}</Link> lançada para {lancada.servidor}.
+            Os dados abaixo foram mantidos: escolha o próximo servidor da missão ou{' '}
+            <button type="button" className="underline font-semibold" onClick={comecarEmBranco}>comece um lançamento em branco</button>.
+          </p>
+        </Alerta>
+      )}
       {editando && (situacaoAtual === 'PENDENTE' || situacaoAtual === 'REJEITADA') && (
         <Alerta tipo="info" className="mb-4">Esta diária ficou {situacaoAtual === 'PENDENTE' ? 'pendente' : 'rejeitada'} na etapa de aprovação, que não existe mais. Ao salvar, ela fica aprovada.</Alerta>
       )}

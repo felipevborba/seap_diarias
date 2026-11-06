@@ -1,6 +1,6 @@
 """Teste ponta a ponta da API (banco de desenvolvimento com database/dev/01_dados_ficticios.sql e schemas recém-criados).
 Uso: python3 ferramentas/testes/e2e_api.py [http://localhost:5244]"""
-import json, sys, urllib.request, urllib.error
+import json, sys, time, urllib.request, urllib.error
 B = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:5244"
 def call(m, p, body=None, tok=None, raw=False):
     r=urllib.request.Request(B+p, method=m, data=json.dumps(body).encode() if body is not None else None,
@@ -218,4 +218,24 @@ s,r=call("PUT",f"/api/usuarios/{eu}/perfil",{"perfil":"ADMIN"},tok=T3); ok("devo
 s,r=login(A1); ok("administrador geral volta a entrar", s==200)
 T=r["data"]["token"]
 s,r=call("DELETE",f"/api/usuarios/{a2}",tok=T); ok("exclui o segundo admin", r["success"])
+# ---- operador troca a propria senha ----
+time.sleep(61)  # limite de 10 logins por minuto
+s,r=call("POST","/api/usuarios",{"nome":"Operador Senha","cpf":"714.602.380-01","matricula":"88","senha":"abc123","perfil":"OPERADOR"},tok=T); op=r["data"]; ok("cria operador", r["success"], r.get("message"))
+TO=call("POST","/api/auth/login",{"cpf":"71460238001","senha":"abc123"})[1]["data"]["token"]
+s,r=call("POST","/api/auth/senha",{"senhaAtual":"errada","novaSenha":"nova456"},tok=TO); ok("senha atual errada recusada sem derrubar a sessao", s==400, str(s))
+s,r=call("POST","/api/auth/senha",{"senhaAtual":"abc123","novaSenha":"  12  "},tok=TO); ok("senha curta recusada", s==400, str(s))
+s,r=call("POST","/api/auth/senha",{"senhaAtual":"abc123","novaSenha":"abc123"},tok=TO); ok("senha igual a atual recusada", s==400, str(s))
+s,r=call("POST","/api/auth/senha",{"senhaAtual":"abc123","novaSenha":"nova456"}); ok("sem login nao troca senha", s==401, str(s))
+s,r=call("POST","/api/auth/senha",{"senhaAtual":"abc123","novaSenha":"nova456"},tok=TO); ok("operador troca a propria senha", r["success"], r.get("message"))
+s,r=call("POST","/api/auth/login",{"cpf":"71460238001","senha":"abc123"}); ok("senha antiga nao entra mais", s==401, str(s))
+s,r=call("POST","/api/auth/login",{"cpf":"71460238001","senha":"nova456"}); ok("senha nova entra", s==200, str(s))
+s,r=call("GET","/api/relatorios/auditoria?entidade=usuario&pageSize=5",tok=T); au=[a for a in r["data"]["items"] if a["entidadeId"]==str(op) and a["acao"]=="ALTERACAO"]
+ok("troca de senha auditada sem expor a senha", len(au)==1 and "nova456" not in json.dumps(au) and au[0]["usuarioNome"]=="Operador Senha", json.dumps(au)[:200])
+call("DELETE",f"/api/usuarios/{op}",tok=T)
+# ---- auditoria identifica o servidor por matricula ou CPF ----
+s,r=call("GET","/api/relatorios/auditoria?entidade=servidor&pageSize=50",tok=T); au=r["data"]["items"]
+s,lst=call("GET","/api/servidores?ativo=true&pageSize=50",tok=T); porId={str(x["id"]):x for x in lst["data"]["items"]}
+com=[a for a in au if a["entidadeId"] in porId]
+ok("auditoria traz matricula ou CPF do servidor", com and all((a["servidorMatricula"] or a["servidorCpf"])==(porId[a["entidadeId"]]["matricula"] or porId[a["entidadeId"]]["cpf"]) for a in com), str(len(com)))
+s,r=call("GET","/api/relatorios/auditoria?entidade=cargo&pageSize=5",tok=T); ok("outros registros nao trazem servidor", all(a["servidorMatricula"] is None and a["servidorCpf"] is None for a in r["data"]["items"]))
 print("FALHAS:", falhas); sys.exit(1 if falhas else 0)

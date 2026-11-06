@@ -15,8 +15,13 @@ namespace DiariasSeap.Api.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly AuthService _auth;
+    private readonly UsuariosService _usuarios;
 
-    public AuthController(AuthService auth) => _auth = auth;
+    public AuthController(AuthService auth, UsuariosService usuarios)
+    {
+        _auth = auth;
+        _usuarios = usuarios;
+    }
 
     /// <summary>Área pública: único endpoint de negócio acessível sem token.</summary>
     [HttpPost("login")]
@@ -24,6 +29,16 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest req)
         => this.Sucesso(await _auth.EntrarAsync(req), "Login realizado com sucesso.");
+
+    /// <summary>Qualquer perfil troca a própria senha; exige a atual, com limite de tentativas próprio.</summary>
+    [HttpPost("senha")]
+    [Authorize]
+    [EnableRateLimiting("senha")]
+    public async Task<IActionResult> AlterarSenha([FromBody] AlterarSenhaRequest req)
+    {
+        await _usuarios.AlterarPropriaSenhaAsync(int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!), req);
+        return this.Sucesso("Senha alterada.", "Senha alterada. Ela também vale para a Carteira Funcional.");
+    }
 
     [HttpGet("sessao")]
     [Authorize]
